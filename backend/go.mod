@@ -3,6 +3,7 @@ module valiant
 go 1.25.6
 
 require (
+	github.com/lib/pq v1.11.1
 	k8s.io/apimachinery v0.35.0
 	k8s.io/client-go v0.35.0
 )

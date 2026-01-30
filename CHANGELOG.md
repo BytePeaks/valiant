@@ -24,5 +24,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Infrastructure:**
   - Dockerfiles for Backend and Frontend.
   - docker-compose.yml for full stack local development (Postgres, Backend, Frontend).
+- **Backend (Go):**
+  - Implemented `PostgresStorage` with actual SQL queries for saving and retrieving change events.
+  - Updated `main.go` to connect to PostgreSQL using `lib/pq` and configuration.
   - Basic homepage component.
   - API client layer for interacting with the backend.
