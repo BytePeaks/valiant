@@ -5,11 +5,14 @@ import "time"
 // ChangeEvent is the normalized representation of any collected change.
 type ChangeEvent struct {
 	ID               string            `json:"id"`
-	Source           string            `json:"source"`     // "kubernetes", "git", "ci-cd"
-	ChangeType       string            `json:"change_type"` // "deployment_rollout", "configmap_update", "git_tag"
-	Timestamp        time.Time         `json:"timestamp"`
+	Source           string            `json:"source"`      // DEPRECATED: Use TriggerType. e.g. "kubernetes", "ci-cd"
+	TriggerType      string            `json:"trigger_type"` // "CI", "GitOps", "manual"
+	ExecutionID      string            `json:"execution_id"` // Unique ID of the execution (e.g. CI build ID, K8s UID)
+	ChangeType       string            `json:"change_type"`  // "deployment_rollout", "configmap_update", "build_success"
+	Timestamp        time.Time         `json:"timestamp"`    // Start time of the execution
+	EndTime          *time.Time        `json:"end_time,omitempty"` // End time of the execution (optional)
 	AffectedServices []string          `json:"affected_services"`
-	Metadata         map[string]string `json:"metadata"` // e.g., "image_tag", "commit_sha", "author"
+	Metadata         map[string]string `json:"metadata"` // e.g., "git_commit_sha", "image_tag"
 	Summary          string            `json:"summary"`  // Human-readable summary
 }
 

@@ -7,38 +7,50 @@ Write-Host "Seeding Valiant with mock data at $ApiUrl..."
 function Send-Event {
     param (
         [string]$Summary,
-        [string]$Source,
-        [string]$Type
+        [string]$Trigger,
+        [string]$Type,
+        [string[]]$Services,
+        [int]$MinutesAgo = 0
     )
 
-    $timestamp = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+    $timestamp = (Get-Date).AddMinutes(-$MinutesAgo).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
     # Generate a random 12-char ID
     $id = -join ((48..57) + (65..90) + (97..122) | Get-Random -Count 12 | ForEach-Object { [char]$_ })
 
     $body = @{
         id = $id
-        source = $source
+        trigger_type = $Trigger
+        execution_id = "exec-$id"
         change_type = $Type
         timestamp = $timestamp
-        affected_services = @("payment-service", "order-service")
+        affected_services = $Services
         summary = $Summary
         metadata = @{
             author = "konrad"
             env = "production"
+            version = "v2.4.$(Get-Random -Minimum 0 -Maximum 9)"
         }
     } | ConvertTo-Json -Depth 5
 
     try {
         $response = Invoke-RestMethod -Uri "$ApiUrl/events" -Method Post -Body $body -ContentType "application/json"
-        Write-Host " Sent: $Summary"
+        Write-Host " Sent: $Summary ($MinutesAgo min ago)"
     } catch {
         Write-Error "Failed to send event '$Summary': $_"
     }
 }
 
-Send-Event -Summary "Deployment of payment-service v1.2.3" -Source "kubernetes" -Type "deployment_rollout"
-Send-Event -Summary "Updated configmap payment-config" -Source "kubernetes" -Type "configmap_update"
-Send-Event -Summary "Merged PR #452: Update order processing logic" -Source "git" -Type "pr_merge"
-Send-Event -Summary "CI Build #892 succeeded" -Source "ci-cd" -Type "build_success"
+Send-Event -Summary "Deployment of payment-service v2.4.0" -Trigger "GitOps" -Type "deployment_rollout" -Services @("payment-service") -MinutesAgo 5
+Send-Event -Summary "CI Pipeline #452: Merge & Test" -Trigger "CI" -Type "pipeline_success" -Services @("payment-service", "order-service") -MinutesAgo 15
+Send-Event -Summary "Updated configmap payment-config" -Trigger "GitOps" -Type "configmap_update" -Services @("payment-service") -MinutesAgo 45
+Send-Event -Summary "Manual rollback of order-service" -Trigger "manual" -Type "rollback" -Services @("order-service") -MinutesAgo 60
+Send-Event -Summary "Deployment of inventory-service v1.1.0" -Trigger "GitOps" -Type "deployment_rollout" -Services @("inventory-service") -MinutesAgo 120
+Send-Event -Summary "Database schema migration (users)" -Trigger "CI" -Type "migration" -Services @("payment-service", "user-service") -MinutesAgo 180
+Send-Event -Summary "Canary Release: payment-service v2.5.0-rc1" -Trigger "GitOps" -Type "canary_start" -Services @("payment-service") -MinutesAgo 240
+Send-Event -Summary "Manual cache flush (redis)" -Trigger "manual" -Type "ops_action" -Services @("inventory-service") -MinutesAgo 300
+Send-Event -Summary "Deployment of order-service v3.0.1" -Trigger "GitOps" -Type "deployment_rollout" -Services @("order-service") -MinutesAgo 1440
+Send-Event -Summary "CI Pipeline #440: Nightly Build" -Trigger "CI" -Type "pipeline_success" -Services @("payment-service", "order-service", "inventory-service") -MinutesAgo 1560
+Send-Event -Summary "Hotfix: payment-service gateway timeout" -Trigger "manual" -Type "hotfix" -Services @("payment-service") -MinutesAgo 2880
+Send-Event -Summary "Infrastructure scale-up (node pool)" -Trigger "GitOps" -Type "infra_scale" -Services @("cluster-nodes") -MinutesAgo 4320
 
 Write-Host "Done seeding."

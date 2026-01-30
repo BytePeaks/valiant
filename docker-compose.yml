@@ -22,6 +22,8 @@ services:
       - DATABASE_URL=postgres://valiant:valiant_password@postgres:5432/valiant?sslmode=disable
     ports:
       - "8080:8080"
+    volumes:
+      - ./example/config.yaml:/app/config.yaml
     depends_on:
       - postgres
 

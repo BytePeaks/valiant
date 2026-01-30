@@ -28,9 +28,25 @@ func (router *Router) Handler() http.Handler {
 	})
 
 	mux.HandleFunc("/api/v1/events", router.handleEvents)
+	mux.HandleFunc("/api/v1/services", router.handleServices)
 	mux.HandleFunc("/api/v1/analyze", router.handleAnalysis)
 
 	return corsMiddleware(mux)
+}
+
+func (router *Router) handleServices(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	services, err := router.storage.GetServices(r.Context())
+	if err != nil {
+		http.Error(w, "Failed to fetch services", http.StatusInternalServerError)
+		return
+	}
+
+	json.NewEncoder(w).Encode(services)
 }
 
 func corsMiddleware(next http.Handler) http.Handler {
@@ -99,6 +115,11 @@ func (router *Router) handleAnalysis(w http.ResponseWriter, r *http.Request) {
 	}
 
 	analysis, err := router.correlator.AnalyzeImpact(r.Context(), event)
+	if err == correlator.ErrImpactWindowNotClosed {
+		w.WriteHeader(http.StatusUnprocessableEntity) // 422 indicates semantic issue (too early)
+		json.NewEncoder(w).Encode(analysis)
+		return
+	}
 	if err != nil {
 		http.Error(w, "Analysis failed: "+err.Error(), http.StatusInternalServerError)
 		return

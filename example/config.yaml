@@ -1,0 +1,19 @@
+# Valiant Backend Configuration
+
+# Database Connection (Can be overridden by DATABASE_URL env var)
+database_url: "postgres://valiant:valiant_password@postgres:5432/valiant?sslmode=disable"
+
+# Backend Server Port
+port: "8080"
+
+# Prometheus Configuration
+prometheus:
+  url: "http://host.docker.internal:9090" # Use host.docker.internal for local Prom, or http://prometheus:9090 if in compose
+
+# Analysis Window Configuration
+analysis:
+  # Duration to look back before the event to establish baseline
+  baseline_window: "30m"
+  
+  # Duration to look forward after the event to measure impact
+  impact_window: "30m"

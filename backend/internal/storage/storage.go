@@ -10,4 +10,8 @@ type Storage interface {
 	SaveChangeEvent(ctx context.Context, event domain.ChangeEvent) error
 	GetChangeEvents(ctx context.Context, filters map[string]interface{}) ([]domain.ChangeEvent, error)
 	GetChangeEventByID(ctx context.Context, id string) (domain.ChangeEvent, error)
+	GetServices(ctx context.Context) ([]string, error)
+	
+	SaveImpactAnalysis(ctx context.Context, analysis domain.ImpactAnalysis) error
+	GetImpactAnalysisByEventID(ctx context.Context, eventID string) (*domain.ImpactAnalysis, error)
 }

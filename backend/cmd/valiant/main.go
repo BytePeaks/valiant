@@ -18,7 +18,10 @@ func main() {
 	fmt.Println("Starting Valiant Backend...")
 
 	// Load configuration
-	cfg := config.Load()
+	cfg, err := config.Load("config.yaml")
+	if err != nil {
+		log.Printf("Warning: Failed to load config file: %v. Using defaults/env.", err)
+	}
 
 	// Connect to database
 	db, err := sql.Open("postgres", cfg.DatabaseURL)
@@ -37,17 +40,22 @@ func main() {
 
 	// Run migrations
 	if err := store.RunMigration("migrations/001_initial_schema.sql"); err != nil {
-		log.Fatalf("Failed to run migrations: %v", err)
+		log.Fatalf("Failed to run migrations (001): %v", err)
+	}
+	if err := store.RunMigration("migrations/002_add_impact_snapshots.sql"); err != nil {
+		log.Fatalf("Failed to run migrations (002): %v", err)
+	}
+	if err := store.RunMigration("migrations/003_add_execution_fields.sql"); err != nil {
+		log.Fatalf("Failed to run migrations (003): %v", err)
 	}
 	fmt.Println("Database migrations applied")
 
-	promURL := config.GetEnv("PROMETHEUS_URL", "http://localhost:9090")
-	metricClient, err := metrics.NewPrometheusClient(promURL)
+	metricClient, err := metrics.NewPrometheusClient(cfg.Prometheus.URL)
 	if err != nil {
 		log.Fatalf("Failed to initialize prometheus client: %v", err)
 	}
 
-	engine := correlator.NewEngine(store, metricClient)
+	engine := correlator.NewEngine(store, metricClient, cfg)
 	router := api.NewRouter(store, engine)
 
 	server := &http.Server{

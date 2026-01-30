@@ -15,7 +15,10 @@ import {
   Box,
   Terminal,
   ChevronRight,
-  Loader2
+  Loader2,
+  ShieldCheck,
+  Hourglass,
+  Tag
 } from 'lucide-react';
 
 interface TimelineEventProps {
@@ -25,6 +28,10 @@ interface TimelineEventProps {
 export default function TimelineEvent({ event }: TimelineEventProps) {
   const [analysis, setAnalysis] = useState<ImpactAnalysis | null>(null);
   const [loading, setLoading] = useState(false);
+
+  // Analysis is available only after 35 minutes (30m impact window + 5m buffer)
+  const analysisTime = new Date(event.timestamp).getTime() + 35 * 60 * 1000;
+  const isPending = Date.now() < analysisTime;
 
   const handleAnalyze = async () => {
     setLoading(true);
@@ -39,10 +46,15 @@ export default function TimelineEvent({ event }: TimelineEventProps) {
   };
 
   const getSourceIcon = () => {
-    switch (event.source) {
+    // Fallback to source if trigger_type is missing (for old data)
+    const type = event.trigger_type || event.source;
+    switch (type?.toLowerCase()) {
+      case 'gitops': return <Box className="w-4 h-4" />;
       case 'kubernetes': return <Box className="w-4 h-4" />;
       case 'git': return <GitBranch className="w-4 h-4" />;
+      case 'ci': return <Terminal className="w-4 h-4" />;
       case 'ci-cd': return <Terminal className="w-4 h-4" />;
+      case 'manual': return <Zap className="w-4 h-4" />;
       default: return <Info className="w-4 h-4" />;
     }
   };
@@ -53,7 +65,7 @@ export default function TimelineEvent({ event }: TimelineEventProps) {
         <div className="space-y-1">
           <div className="flex items-center gap-2 text-[10px] font-bold text-blue-600 uppercase tracking-widest">
             {getSourceIcon()}
-            {event.source}
+            {event.trigger_type || event.source}
           </div>
           <h3 className="text-xl font-bold text-gray-900 group-hover:text-blue-700 transition-colors">{event.summary}</h3>
           <div className="flex items-center gap-2 text-sm text-gray-400">
@@ -63,39 +75,64 @@ export default function TimelineEvent({ event }: TimelineEventProps) {
               <Clock className="w-2 h-2" />
               {timeAgo(new Date(event.timestamp))}
             </span>
+            {event.affected_services?.map(service => (
+              <span key={service} className="flex items-center gap-1 px-2 py-0.5 bg-slate-100 text-slate-600 text-[10px] font-bold rounded-full border border-slate-200">
+                <Tag className="w-2 h-2" />
+                {service}
+              </span>
+            ))}
           </div>
         </div>
-        {!analysis && !loading && (
-          <button 
-            onClick={handleAnalyze}
-            className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white text-sm font-bold rounded-xl hover:bg-blue-700 transition-all shadow-lg shadow-blue-200"
-          >
-            <Zap className="w-4 h-4 fill-current" />
-            Analyze
-          </button>
-        )}
-        {loading && (
-          <div className="flex items-center gap-2 px-4 py-2 text-blue-600 font-bold text-sm">
-            <Loader2 className="w-4 h-4 animate-spin" />
-            Analyzing...
-          </div>
-        )}
+        
+        {/* Actions Area */}
+        <div className="flex items-center">
+          {!analysis && !loading && isPending && (
+             <div className="flex items-center gap-2 px-4 py-2 bg-gray-100 text-gray-500 text-sm font-bold rounded-xl border border-gray-200 cursor-not-allowed opacity-75" title="Data collection in progress">
+               <Hourglass className="w-4 h-4 animate-pulse" />
+               Pending
+             </div>
+          )}
+          
+          {!analysis && !loading && !isPending && (
+            <button 
+              onClick={handleAnalyze}
+              className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white text-sm font-bold rounded-xl hover:bg-blue-700 transition-all shadow-lg shadow-blue-200"
+            >
+              <Zap className="w-4 h-4 fill-current" />
+              Analyze
+            </button>
+          )}
+
+          {loading && (
+            <div className="flex items-center gap-2 px-4 py-2 text-blue-600 font-bold text-sm">
+              <Loader2 className="w-4 h-4 animate-spin" />
+              Analyzing...
+            </div>
+          )}
+        </div>
       </div>
 
       {analysis && (
         <div className="mt-6 pt-6 border-t border-gray-100 animate-in fade-in slide-in-from-top-2 duration-300">
           
           <div className="flex items-center p-4 bg-gray-50 rounded-xl mb-6 border border-gray-100">
-             <div className="flex-1 text-center border-r border-gray-200 pr-4">
+             <div className="flex-1 text-center border-r border-gray-200">
                 <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Impact Score</span>
-                <div className={`text-3xl font-black mt-1 ${getImpactColor(analysis.impact_level)}`}>
-                  {(analysis.impact_score * 100).toFixed(0)}<span className="text-sm text-gray-400 font-normal">%</span>
+                <div className={`text-2xl font-black mt-1 ${getImpactColor(analysis.impact_level)}`}>
+                  {(analysis.impact_score * 100).toFixed(0)}<span className="text-xs text-gray-400 font-normal">%</span>
                 </div>
              </div>
-             <div className="flex-1 text-center pl-4">
-                <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Severity Level</span>
-                <div className={`text-xl font-bold mt-1 px-3 py-1 inline-block rounded-full bg-white border border-gray-200 shadow-sm ${getImpactColor(analysis.impact_level)}`}>
+             <div className="flex-1 text-center border-r border-gray-200">
+                <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Severity</span>
+                <div className={`text-sm font-bold mt-2 px-3 py-0.5 inline-block rounded-full bg-white border border-gray-200 shadow-sm ${getImpactColor(analysis.impact_level)}`}>
                   {analysis.impact_level}
+                </div>
+             </div>
+             <div className="flex-1 text-center">
+                <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Confidence</span>
+                <div className={`text-xl font-black mt-1 flex items-center justify-center gap-1 ${analysis.confidence_score > 0.7 ? 'text-emerald-600' : 'text-orange-500'}`}>
+                  <ShieldCheck className="w-3 h-3" />
+                  {(analysis.confidence_score * 100).toFixed(0)}<span className="text-xs text-gray-400 font-normal">%</span>
                 </div>
              </div>
           </div>

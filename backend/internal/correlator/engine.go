@@ -2,8 +2,10 @@ package correlator
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"time"
+	"valiant/internal/config"
 	"valiant/internal/domain"
 	"valiant/internal/metrics"
 	"valiant/internal/storage"
@@ -23,29 +25,57 @@ const (
 	thresholdLow    = 0.1
 )
 
+var ErrImpactWindowNotClosed = fmt.Errorf("impact window has not yet closed")
+
 type Engine struct {
 	storage storage.Storage
 	metrics metrics.MetricsProvider
+	config  *config.Config
 }
 
-func NewEngine(s storage.Storage, m metrics.MetricsProvider) *Engine {
+func NewEngine(s storage.Storage, m metrics.MetricsProvider, cfg *config.Config) *Engine {
 	return &Engine{
 		storage: s,
 		metrics: m,
+		config:  cfg,
 	}
 }
 
 func (e *Engine) AnalyzeImpact(ctx context.Context, event domain.ChangeEvent) (domain.ImpactAnalysis, error) {
-	// 1. Define time windows relative to the change event.
-	// Baseline: 30m to 5m before event
-	baselineStart := event.Timestamp.Add(-30 * time.Minute)
+	// 1. Check if snapshot exists
+	existing, err := e.storage.GetImpactAnalysisByEventID(ctx, event.ID)
+	if err != nil {
+		return domain.ImpactAnalysis{}, err
+	}
+	if existing != nil {
+		// Populate the ChangeEvent as it is not stored in the snapshot table fully
+		existing.ChangeEvent = event
+		existing.ConfidenceScore = 1.0 // Restore default
+		return *existing, nil
+	}
+
+	// 2. Define time windows relative to the change event using Config
+	baselineDur := e.config.Analysis.BaselineDur
+	impactDur := e.config.Analysis.ImpactDur
+
+	// Baseline: e.g., 30m to 5m before event
+	// Note: We keep the 5m buffer gap to avoid the "noisy" moment of deployment itself
+	baselineStart := event.Timestamp.Add(-(baselineDur))
 	baselineEnd := event.Timestamp.Add(-5 * time.Minute)
 
-	// Impact: 5m to 30m after event
+	// Impact: e.g., 5m to 35m after event (if duration is 30m)
 	impactStart := event.Timestamp.Add(5 * time.Minute)
-	impactEnd := event.Timestamp.Add(30 * time.Minute)
+	impactEnd := event.Timestamp.Add(5 * time.Minute).Add(impactDur)
 
-	// 2. Query Prometheus for average metrics in each window.
+	// Check if impact window has closed
+	if time.Now().UTC().Before(impactEnd) {
+		return domain.ImpactAnalysis{
+			ChangeEvent: event,
+			ImpactLevel: "PENDING",
+		}, ErrImpactWindowNotClosed
+	}
+
+	// 3. Query Prometheus for average metrics in each window.
 	baselineMetrics, err := e.metrics.GetAverageMetrics(ctx, event.AffectedServices, baselineStart, baselineEnd)
 	if err != nil {
 		return domain.ImpactAnalysis{}, err
@@ -56,24 +86,35 @@ func (e *Engine) AnalyzeImpact(ctx context.Context, event domain.ChangeEvent) (d
 		return domain.ImpactAnalysis{}, err
 	}
 
-	// 3. Calculate percentage deltas for each metric.
+	// 4. Calculate percentage deltas for each metric.
 	deltas := calculateDeltas(baselineMetrics, impactMetrics)
 
-	// 4. Normalize deltas into a 0-1 score and compute weighted sum.
+	// 5. Normalize deltas into a 0-1 score and compute weighted sum.
 	impactScore := calculateImpactScore(deltas)
 
-	// 5. Classify impact level.
+	// 6. Classify impact level.
 	impactLevel := classifyImpactLevel(impactScore)
 
-	return domain.ImpactAnalysis{
+	// 7. Calculate confidence score based on data volume.
+	confidenceScore := calculateConfidenceScore(baselineMetrics, impactMetrics)
+
+	analysis := domain.ImpactAnalysis{
 		ChangeEvent:     event,
 		BaselineMetrics: baselineMetrics,
 		ImpactMetrics:   impactMetrics,
 		Deltas:          deltas,
 		ImpactScore:     impactScore,
 		ImpactLevel:     impactLevel,
-		ConfidenceScore: 1.0, // Default for deterministic logic
-	}, nil
+		ConfidenceScore: confidenceScore,
+	}
+
+	// 7. Save snapshot
+	if err := e.storage.SaveImpactAnalysis(ctx, analysis); err != nil {
+		// Log error but return analysis anyway
+		fmt.Printf("Warning: Failed to save analysis snapshot: %v\n", err)
+	}
+
+	return analysis, nil
 }
 
 func calculateDeltas(baseline, impact domain.MetricValues) domain.MetricValues {
@@ -131,4 +172,16 @@ func classifyImpactLevel(score float64) string {
 		return "LOW"
 	}
 	return "NONE"
+}
+
+func calculateConfidenceScore(baseline, impact domain.MetricValues) float64 {
+	// If RPS is very low, our percentage deltas are less statistically significant.
+	if baseline.RPS < 1.0 && impact.RPS < 1.0 {
+		return 0.5
+	}
+	// If we have zero metrics across the board, confidence is very low
+	if baseline.RPS == 0 && impact.RPS == 0 && baseline.ErrorRate == 0 && impact.ErrorRate == 0 {
+		return 0.1
+	}
+	return 1.0
 }

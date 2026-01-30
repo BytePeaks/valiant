@@ -16,8 +16,8 @@ func NewGitCollector(repoPath string) *GitCollector {
 }
 
 func (c *GitCollector) Collect(ctx context.Context) ([]domain.ChangeEvent, error) {
-	// TODO: Implement git log / tag inspection
-	// In a real implementation, we might use go-git or exec git command
+	// GitCollector is disabled in favor of execution-based monitoring (CI/CD, K8s).
+	// Git tags/commits should be metadata on those execution events, not standalone events.
 	return []domain.ChangeEvent{}, nil
 }
 

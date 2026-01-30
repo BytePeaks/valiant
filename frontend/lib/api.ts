@@ -1,6 +1,8 @@
 export interface ChangeEvent {
   id: string;
-  source: string;
+  source: string; // Deprecated in favor of trigger_type
+  trigger_type?: string;
+  execution_id?: string;
   change_type: string;
   timestamp: string;
   affected_services: string[];
@@ -32,6 +34,15 @@ export async function fetchChangeEvents(): Promise<ChangeEvent[]> {
   const res = await fetch(`${API_BASE_URL}/events`);
   if (!res.ok) {
     throw new Error('Failed to fetch events');
+  }
+  const data = await res.json();
+  return data || [];
+}
+
+export async function fetchServices(): Promise<string[]> {
+  const res = await fetch(`${API_BASE_URL}/services`);
+  if (!res.ok) {
+    throw new Error('Failed to fetch services');
   }
   const data = await res.json();
   return data || [];
