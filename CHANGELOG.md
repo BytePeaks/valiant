@@ -27,5 +27,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Backend (Go):**
   - Implemented `PostgresStorage` with actual SQL queries for saving and retrieving change events.
   - Updated `main.go` to connect to PostgreSQL using `lib/pq` and configuration.
+  - Implemented `PrometheusClient` with actual PromQL queries for error rate, latency, RPS, and saturation metrics.
   - Basic homepage component.
   - API client layer for interacting with the backend.

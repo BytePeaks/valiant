@@ -34,7 +34,13 @@ func main() {
 
 	// Initialize dependencies
 	store := storage.NewPostgresStorage(db)
-	metricClient := metrics.NewPrometheusClient("http://localhost:9090")
+	
+	promURL := config.GetEnv("PROMETHEUS_URL", "http://localhost:9090")
+	metricClient, err := metrics.NewPrometheusClient(promURL)
+	if err != nil {
+		log.Fatalf("Failed to initialize prometheus client: %v", err)
+	}
+
 	engine := correlator.NewEngine(store, metricClient)
 	router := api.NewRouter(store, engine)
 

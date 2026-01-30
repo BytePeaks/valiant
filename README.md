@@ -1,6 +1,20 @@
 # Valiant
 
-Valiant is a change impact radar for engineering teams, correlating system changes with service degradation.
+Valiant is an **open-source change impact radar** for DevOps and SRE teams.  
+It automatically correlates **infrastructure, deployment, and configuration changes** with **service degradation**, helping teams quickly identify which recent change caused errors, latency spikes, or traffic drops.  
+
+Valiant is built with **Go** on the backend, **Next.js** for the frontend, **PostgreSQL** for storage, and integrates seamlessly with **Prometheus** metrics.
+
+---
+
+## Features
+
+- Correlates system changes with metrics: error rate, latency, traffic, CPU/memory saturation
+- Visual timeline of changes and service impact
+- Deterministic and explainable impact scoring
+- Lightweight, self-hosted, open-source core
+
+---
 
 ## Getting Started
 
@@ -36,3 +50,12 @@ cd frontend
 npm install
 npm run dev
 ```
+
+## Contributing
+
+Valiant is fully open-source. Contributions are welcome via pull requests, issues, and feature suggestions.
+Please follow standard Go and Next.js coding conventions.
+
+## License
+
+Valiant OSS core is licensed under AGPL-3.0. [LICENSE](LICENSE)
