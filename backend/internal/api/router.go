@@ -26,24 +26,68 @@ func (router *Router) Handler() http.Handler {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("OK"))
 	})
-	
+
 	mux.HandleFunc("/api/v1/events", router.handleEvents)
+	mux.HandleFunc("/api/v1/analyze", router.handleAnalysis)
 
 	return mux
 }
 
 func (router *Router) handleEvents(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPost {
-		// Example: Receive a manual change event
 		var event domain.ChangeEvent
 		if err := json.NewDecoder(r.Body).Decode(&event); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		// In a real scenario, we'd save it and maybe trigger analysis
+
+		if err := router.storage.SaveChangeEvent(r.Context(), event); err != nil {
+			http.Error(w, "Failed to save event", http.StatusInternalServerError)
+			return
+		}
+
 		w.WriteHeader(http.StatusCreated)
 		return
 	}
-	// TODO: GET for listing events
+
+	if r.Method == http.MethodGet {
+		events, err := router.storage.GetChangeEvents(r.Context(), nil)
+		if err != nil {
+			http.Error(w, "Failed to fetch events", http.StatusInternalServerError)
+			return
+		}
+		json.NewEncoder(w).Encode(events)
+		return
+	}
+
 	w.WriteHeader(http.StatusMethodNotAllowed)
+}
+
+func (router *Router) handleAnalysis(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		EventID string `json:"event_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	event, err := router.storage.GetChangeEventByID(r.Context(), req.EventID)
+	if err != nil {
+		http.Error(w, "Event not found", http.StatusNotFound)
+		return
+	}
+
+	analysis, err := router.correlator.AnalyzeImpact(r.Context(), event)
+	if err != nil {
+		http.Error(w, "Analysis failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	json.NewEncoder(w).Encode(analysis)
 }

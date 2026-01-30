@@ -13,13 +13,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Project initialization with Go modules.
   - Core domain models for `ChangeEvent`, `MetricValues`, and `ImpactAnalysis`.
   - Defined interfaces for `Storage`, `MetricsProvider`, and `Collector`.
-  - Skeleton implementations for PostgreSQL storage, Prometheus metrics, and Kubernetes collection.
-  - Core impact correlation engine logic skeleton.
-  - HTTP API server with health check and basic event submission endpoint.
+  - Skeleton implementations for PostgreSQL storage, Prometheus metrics, and Kubernetes, Git, and CI/CD collectors.
+  - Core impact correlation engine logic with configurable weights and thresholds.
+  - HTTP API server with health check, event submission, event listing, and impact analysis endpoints.
   - Initial database migration for the `change_events` table.
   - Environment-based configuration management.
 - **Frontend (Next.js):**
-  - Next.js 14 project skeleton with TypeScript.
+  - Next.js 16 project skeleton with TypeScript and React 19.
   - Root layout with Inter font and global CSS.
+- **Infrastructure:**
+  - Dockerfiles for Backend and Frontend.
+  - docker-compose.yml for full stack local development (Postgres, Backend, Frontend).
   - Basic homepage component.
   - API client layer for interacting with the backend.
