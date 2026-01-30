@@ -35,6 +35,24 @@ docker-compose up --build
 - Backend API: [http://localhost:8080/health](http://localhost:8080/health)
 - Database: Postgres on port 5432
 
+### Seeding Data
+
+To populate the system with some mock change events (useful for testing the timeline UI):
+
+1. Ensure the stack is running (`docker-compose up`).
+2. Run the seed script from your host machine:
+
+```bash
+chmod +x backend/scripts/seed_data.sh
+./backend/scripts/seed_data.sh
+```
+
+Or on Windows (PowerShell):
+
+```powershell
+./backend/scripts/seed_data.ps1
+```
+
 ### Local Development
 
 #### Backend

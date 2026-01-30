@@ -21,11 +21,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Frontend (Next.js):**
   - Next.js 16 project skeleton with TypeScript and React 19.
   - Root layout with Inter font and global CSS.
+  - Implemented `Timeline` and `TimelineEvent` components.
+  - Added on-demand impact analysis triggering from the UI.
+  - Added safe handling of null API responses in `fetchChangeEvents`.
+  - Improved data models in the frontend API layer.
 - **Infrastructure:**
   - Dockerfiles for Backend and Frontend.
   - docker-compose.yml for full stack local development (Postgres, Backend, Frontend).
+  - Added bash and PowerShell scripts for seeding mock data.
 - **Backend (Go):**
   - Implemented `PostgresStorage` with actual SQL queries for saving and retrieving change events.
+  - Added automatic execution of `001_initial_schema.sql` on backend startup.
+  - Implemented CORS middleware to allow cross-origin requests from the frontend.
   - Updated `main.go` to connect to PostgreSQL using `lib/pq` and configuration.
   - Implemented `PrometheusClient` with actual PromQL queries for error rate, latency, RPS, and saturation metrics.
   - Basic homepage component.

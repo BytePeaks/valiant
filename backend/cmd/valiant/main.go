@@ -34,7 +34,13 @@ func main() {
 
 	// Initialize dependencies
 	store := storage.NewPostgresStorage(db)
-	
+
+	// Run migrations
+	if err := store.RunMigration("migrations/001_initial_schema.sql"); err != nil {
+		log.Fatalf("Failed to run migrations: %v", err)
+	}
+	fmt.Println("Database migrations applied")
+
 	promURL := config.GetEnv("PROMETHEUS_URL", "http://localhost:9090")
 	metricClient, err := metrics.NewPrometheusClient(promURL)
 	if err != nil {

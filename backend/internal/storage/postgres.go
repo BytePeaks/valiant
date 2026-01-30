@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"os"
 	"valiant/internal/domain"
 
 	"github.com/lib/pq"
@@ -16,6 +17,19 @@ type PostgresStorage struct {
 
 func NewPostgresStorage(db *sql.DB) *PostgresStorage {
 	return &PostgresStorage{db: db}
+}
+
+func (s *PostgresStorage) RunMigration(schemaPath string) error {
+	content, err := os.ReadFile(schemaPath)
+	if err != nil {
+		return fmt.Errorf("failed to read migration file: %w", err)
+	}
+
+	if _, err := s.db.Exec(string(content)); err != nil {
+		return fmt.Errorf("failed to execute migration: %w", err)
+	}
+
+	return nil
 }
 
 func (s *PostgresStorage) SaveChangeEvent(ctx context.Context, event domain.ChangeEvent) error {
