@@ -1,20 +1,6 @@
-# Valiant
+Valiant is a change impact radar for engineering teams, correlating system changes with service degradation.
 
-Valiant is an **open-source change impact radar** for DevOps and SRE teams.  
-It automatically correlates **infrastructure, deployment, and configuration changes** with **service degradation**, helping teams quickly identify which recent change caused errors, latency spikes, or traffic drops.  
-
-Valiant is built with **Go** on the backend, **Next.js** for the frontend, **PostgreSQL** for storage, and integrates seamlessly with **Prometheus** metrics.
-
----
-
-## Features
-
-- Correlates system changes with metrics: error rate, latency, traffic, CPU/memory saturation
-- Visual timeline of changes and service impact
-- Deterministic and explainable impact scoring
-- Lightweight, self-hosted, open-source core
-
----
+For a detailed guide on how to set up and use the system, see [HOW_TO_USE.md](./HOW_TO_USE.md).
 
 ## Getting Started
 

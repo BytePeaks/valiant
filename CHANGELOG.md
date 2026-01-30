@@ -23,7 +23,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Root layout with Inter font and global CSS.
   - Implemented `Timeline` and `TimelineEvent` components.
   - Added on-demand impact analysis triggering from the UI.
+  - Added detailed metric deltas breakdown in the analysis view with improved visual design (cards, colors).
+  - Added "Show More" pagination logic to the timeline view.
+  - Polished UI with `lucide-react` icons and improved layout for events and metrics.
   - Added safe handling of null API responses in `fetchChangeEvents`.
+  - Fixed missing Tailwind CSS configuration (`tailwind.config.ts`, `postcss.config.js`) and dependencies.
+  - Moved styling dependencies to `dependencies` and updated Dockerfile to ensure `npm install` runs on startup, fixing volume sync issues.
+  - Added `--legacy-peer-deps` to npm install commands to resolve React 19 peer dependency conflicts.
   - Improved data models in the frontend API layer.
 - **Infrastructure:**
   - Dockerfiles for Backend and Frontend.
