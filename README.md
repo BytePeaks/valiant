@@ -91,11 +91,10 @@ Valiant is structured as a client-server application with a Go backend, a Next.j
 - **Correlator Engine**: Encapsulates the deterministic logic for correlating change events with metric shifts and generating impact scores.
 - **Frontend**: Focuses on user experience, data visualization, and allowing users to interact with the Valiant system.
 
-**[INSERT SCREENSHOT: High-Level Architecture Diagram]**
-(Placeholder for an architectural diagram showing the flow between Frontend, Backend, Collectors, PostgreSQL, and Prometheus.)
-This diagram illustrates the primary components of Valiant and their interaction, highlighting the unidirectional data flow from collectors to the backend and the analysis process involving Prometheus and PostgreSQL.
+## High-Level Architecture Diagram
 
----
+[![](https://mermaid.ink/img/pako:eNptUttu00AQ_ZXVSkUg5WK3buz4ASmxHVQVoTQJVMKpqk08OCb2brS7hoQk34B4440XPqLfww_AJzC-NEkR87CanTnHM3uOt3QuIqAujSVbLcjEn3KCcXZGenMtpCLPSLDWIDlLyXijNGSqQrxVIMM_P779LLO7qnjtqPDX94ffD1_JdT5DFmhQpDe8qvveleeH3lXb88kwWUGacMDOYeQ7liaMa-IJCXhkK8GB63qgymfVjjXqvlqnahYxCML2QAqugUekSd7AWrc-qvbdEdEPwj6bL6v-K1Eshu_DaRJShq89gXoiTaFUIDymdR_5J0v7sMIC8HkC_27qM83ux8h87BTh98PnQ6F0LGF88_rFycyhFFlYHKAXkP9_mic4x2USwU98IM3my11fis-Y71CHqjMIyvooGE_Kl3osTZVLBqDn1WoNMpFJHCO_h_ZuVKJ2KNHjMPSy5N8yxKOLI5RB5BoxR0GOrlZQmC2EWD5F1JhDpUR6C8ZjCD4V9p4O7Vc7ozBkBCxq38pEww41e9IuNELETQ4SRd-VwtEG_sJJRF0tc2jQDGTGiivdFtQpRUkzmFIX04jJ5ZRO-R45K8bfC2TXNCnyeEHdDyxVeMtXEdPgJwztzA5VWdgtPZFzTd1zo_wGdbd0TV2rc9GyTLN72bEd2zS6VoNuqGsbLevCtmzbNE3H7Fj7Bv1SzjRajn1pFOGYjm0Z3fP9Xw1xIKo?type=png)](https://mermaid.live/edit#pako:eNptUttu00AQ_ZXVSkUg5WK3buz4ASmxHVQVoTQJVMKpqk08OCb2brS7hoQk34B4440XPqLfww_AJzC-NEkR87CanTnHM3uOt3QuIqAujSVbLcjEn3KCcXZGenMtpCLPSLDWIDlLyXijNGSqQrxVIMM_P779LLO7qnjtqPDX94ffD1_JdT5DFmhQpDe8qvveleeH3lXb88kwWUGacMDOYeQ7liaMa-IJCXhkK8GB63qgymfVjjXqvlqnahYxCML2QAqugUekSd7AWrc-qvbdEdEPwj6bL6v-K1Eshu_DaRJShq89gXoiTaFUIDymdR_5J0v7sMIC8HkC_27qM83ux8h87BTh98PnQ6F0LGF88_rFycyhFFlYHKAXkP9_mic4x2USwU98IM3my11fis-Y71CHqjMIyvooGE_Kl3osTZVLBqDn1WoNMpFJHCO_h_ZuVKJ2KNHjMPSy5N8yxKOLI5RB5BoxR0GOrlZQmC2EWD5F1JhDpUR6C8ZjCD4V9p4O7Vc7ozBkBCxq38pEww41e9IuNELETQ4SRd-VwtEG_sJJRF0tc2jQDGTGiivdFtQpRUkzmFIX04jJ5ZRO-R45K8bfC2TXNCnyeEHdDyxVeMtXEdPgJwztzA5VWdgtPZFzTd1zo_wGdbd0TV2rc9GyTLN72bEd2zS6VoNuqGsbLevCtmzbNE3H7Fj7Bv1SzjRajn1pFOGYjm0Z3fP9Xw1xIKo)
+
 
 ## Data Flow
 
@@ -218,12 +217,12 @@ This demonstrates how external systems can directly send change events to Valian
 
 ## Screenshots / UI
 
-**[INSERT SCREENSHOT: Service Timeline and Analysis View]**
-(Placeholder for a screenshot of a specific service's timeline with analysis results)
+### Service Analytics (for now)
+![Service Timeline and Analysis View](docs/images/service_analytics.png)
 This screenshot highlights Valiant's core functionality: showing a detailed timeline of change events for a selected service, overlaid with the results of impact analyses, including confidence scores and metric deviations. It is important for detailed incident investigation.
 
-**[INSERT SCREENSHOT: Main Dashboard]**
-(Placeholder for a screenshot of the main dashboard)
+### Dashboard
+![Main Dashboard](docs/images/dashboard.png)
 This screenshot depicts the overall health and recent activity across all monitored services in Valiant, allowing users to quickly identify services with recent changes or potential issues.
 
 ---
