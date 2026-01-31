@@ -42,13 +42,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Added `--legacy-peer-deps` to npm install commands to resolve React 19 peer dependency conflicts.
   - Implemented `GitCollector` to parse git tags and commits from a local repository.
   - Implemented immutable `ImpactAnalysis` snapshots. Analysis results are now stored in the database and reused to prevent historical drift.
-  - Added support for `config.yaml` to configure analysis windows (baseline/impact durations) and other settings.
+  - Added support for `config.yaml` to configure analysis windows (baseline/impact durations), and now **customizable Prometheus query templates** with variable substitution (`{{ .Services }}`, `{{ .Duration }}`).
+  - Implemented **Automatic Background Analysis**: A worker now periodically checks for events with expired impact windows and calculates/snapshots their impact without user intervention.
   - Fixed `fetchEvents` reference error in frontend by renaming handler to `fetchData`.
   - Improved data models in the frontend API layer.
-  - **CRUCIAL:** Changed monitoring model to focus on execution boundaries (Trigger Type: CI, GitOps, Manual). Git events are now treated as metadata only.
+  - **BREAKING:** Changed monitoring model to focus on execution boundaries (Trigger Type: CI, GitOps). Manual events are now deprecated.
   - Added `trigger_type`, `execution_id`, and `end_time` to ChangeEvent model and database schema.
+  - Polished UI with new icons for triggers: `GitBranch` for GitOps, `Bot` for CI.
+  - Updated seed scripts to exclude manual actions, reflecting the execution-only model.
   - Disabled `GitCollector` default behavior to align with the new model.
   - Updated seed scripts (`.sh` and `.ps1`) to generate 12 diverse events with varying timestamps and distinct affected services (fixing filtering issues).
+  - Fully implemented `KubernetesCollector` using `client-go` with strict auditor logic. It now only emits events for completed rollouts (`Available=True`) that prove intent via `valiant.io/source` annotation.
+  - Added support for `allowed_sources` configuration to trust only specific deployment systems (ArgoCD, Helm, CI/CD).
+  - Refined K8s detection to capture precise `rollout_start` and `rollout_end` timestamps for impact anchoring.
+  - Refactored `Collector` interface to be streaming/push-based (`Start(ctx, chan)`).
 - **Frontend (Next.js):**
 - **Infrastructure:**
   - Dockerfiles for Backend and Frontend.

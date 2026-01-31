@@ -1,8 +1,10 @@
 package metrics
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"text/template"
 	"time"
 	"valiant/internal/domain"
 
@@ -12,10 +14,11 @@ import (
 )
 
 type PrometheusClient struct {
-	api v1.API
+	api     v1.API
+	queries map[string]string
 }
 
-func NewPrometheusClient(apiURL string) (*PrometheusClient, error) {
+func NewPrometheusClient(apiURL string, queries map[string]string) (*PrometheusClient, error) {
 	client, err := api.NewClient(api.Config{
 		Address: apiURL,
 	})
@@ -24,7 +27,8 @@ func NewPrometheusClient(apiURL string) (*PrometheusClient, error) {
 	}
 
 	return &PrometheusClient{
-		api: v1.NewAPI(client),
+		api:     v1.NewAPI(client),
+		queries: queries,
 	}, nil
 }
 
@@ -32,18 +36,34 @@ func (p *PrometheusClient) GetAverageMetrics(ctx context.Context, services []str
 	duration := end.Sub(start)
 	durationStr := fmt.Sprintf("%dm", int(duration.Minutes()))
 
+	data := struct {
+		Services string
+		Duration string
+	}{
+		Services: joinServices(services),
+		Duration: durationStr,
+	}
+
 	var values domain.MetricValues
 
 	// Helper to query a single value
-	queryAvg := func(queryTemplate string) (float64, error) {
-		// This is a simplified aggregation over the service list.
-		// In a real world, service names would be labels (e.g., {service="my-service"}).
-		serviceFilter := ""
-		if len(services) > 0 {
-			serviceFilter = fmt.Sprintf(`{service=~"%s"}`, joinServices(services))
+	queryMetric := func(metricKey string) (float64, error) {
+		queryTmpl, ok := p.queries[metricKey]
+		if !ok {
+			return 0, fmt.Errorf("query for %s not defined", metricKey)
 		}
 
-		query := fmt.Sprintf(queryTemplate, serviceFilter, durationStr)
+		tmpl, err := template.New(metricKey).Parse(queryTmpl)
+		if err != nil {
+			return 0, fmt.Errorf("failed to parse template: %w", err)
+		}
+
+		var buf bytes.Buffer
+		if err := tmpl.Execute(&buf, data); err != nil {
+			return 0, fmt.Errorf("failed to execute template: %w", err)
+		}
+
+		query := buf.String()
 		val, _, err := p.api.Query(ctx, query, end)
 		if err != nil {
 			return 0, err
@@ -57,25 +77,12 @@ func (p *PrometheusClient) GetAverageMetrics(ctx context.Context, services []str
 		return float64(vector[0].Value), nil
 	}
 
-	// 1. Error Rate: avg_over_time(rate(http_requests_total{status=~"5.."}[1m])[30m])
-	errorRate, _ := queryAvg(`avg_over_time(sum(rate(http_requests_total%s{status=~"5.."}[1m]))[%s])`)
-	values.ErrorRate = errorRate
-
-	// 2. Latency P95: avg_over_time(histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket[1m])))[30m])
-	latency, _ := queryAvg(`avg_over_time(histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket%s[1m])))[%s])`)
-	values.LatencyP95 = latency * 1000 // Convert to ms
-
-	// 3. RPS: avg_over_time(sum(rate(http_requests_total[1m]))[30m])
-	rps, _ := queryAvg(`avg_over_time(sum(rate(http_requests_total%s[1m]))[%s])`)
-	values.RPS = rps
-
-	// 4. CPU Saturation
-	cpu, _ := queryAvg(`avg_over_time(sum(rate(container_cpu_usage_seconds_total%s[1m]))[%s])`)
-	values.CPUSaturation = cpu
-
-	// 5. Memory Saturation
-	mem, _ := queryAvg(`avg_over_time(sum(container_memory_usage_bytes%s)[%s])`)
-	values.MemorySaturation = mem
+	values.ErrorRate, _ = queryMetric("error_rate")
+	latency, _ := queryMetric("latency_p95")
+	values.LatencyP95 = latency * 1000 // Assume query returns seconds, convert to ms
+	values.RPS, _ = queryMetric("rps")
+	values.CPUSaturation, _ = queryMetric("cpu_saturation")
+	values.MemorySaturation, _ = queryMetric("memory_saturation")
 
 	return values, nil
 }

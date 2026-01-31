@@ -1,6 +1,6 @@
 # How to Use Valiant
 
-Valiant is a change impact radar designed to help engineering teams quickly identify which system changes (deployments, configuration updates, git tags) are correlated with service degradations.
+Valiant is a change impact radar designed to help engineering teams identify which **execution events** (successful deployments or CI runs) are correlated with service stability shifts.
 
 ---
 
@@ -19,112 +19,86 @@ docker-compose up -d --build
 
 ## 🧩 Core Concepts
 
-### 1. Change Events
-A **ChangeEvent** is a normalized representation of any change in your system. This can be:
-- A Kubernetes Deployment rollout.
-- A Git Tag/Release.
-- A manual configuration change.
-- A CI/CD build success.
+### 1. Intent vs. Execution
+Valiant strictly separates **Intent** from **Execution**:
+-   **Intent (Git):** Code commits or merges. These do NOT trigger monitoring because they haven't changed the running system yet. Git info is treated as metadata (e.g., a "Git SHA" attached to a build).
+-   **Execution (Boundary):** When a system (like ArgoCD, Helm, or CI) actually applies a change to the cluster. **Stability monitoring only starts here.**
 
-### 2. Impact Analysis
-When you "Analyze" an event, Valiant:
-1.  **Lookback:** Defines a **Baseline** window (30m to 5m before the change).
-2.  **Lookforward:** Defines an **Impact** window (5m to 30m after the change).
-3.  **Metrics Query:** Fetches average metrics (Error Rate, Latency, etc.) from Prometheus for both windows.
-4.  **Scoring:** Calculates the percentage delta and assigns an **Impact Score (0-100%)** based on weighted heuristics.
+### 2. The "Auditor" Model
+Valiant acts as a strict auditor. It only records a change if:
+1.  It is **Intentional:** The Kubernetes object must have the `valiant.io/source` annotation.
+2.  It is **Completed:** The rollout must be 100% finished and `Available`.
+
+### 3. Impact Analysis (The Pivot)
+When you click **Analyze**, Valiant uses two distinct windows:
+1.  **Baseline Window:** Measures health *before* the rollout started (lookback from `rollout_start`).
+2.  **Impact Window:** Measures health *after* the rollout finished (lookforward from `rollout_end`).
 
 ---
 
-## 🔌 How to Connect Your Apps (The "Magic")
+## 🔌 How to Connect Your Apps
 
-You might be wondering: *"How does Valiant know that my deployment caused that error rate spike?"*
+Valiant connects the dots between your code and your cluster using **Shared Names**.
 
-It relies on **Shared Names**.
+### 1. The Service Match
+Valiant looks at the name of your Kubernetes Deployment (e.g., `payment-service`) and queries Prometheus for metrics with that same label (e.g., `service="payment-service"`). 
 
-### 1. The Name Match
-When a deployment happens (e.g., via the Kubernetes Collector), Valiant creates an event with two key pieces of info:
-1.  **Timestamp:** When it happened.
-2.  **Affected Service:** e.g., `payment-service` (This typically comes from your Kubernetes Deployment name).
+**Rule:** Ensure your Prometheus metrics have a label that matches your Deployment name.
 
-When you click **Analyze**, Valiant turns to Prometheus and essentially asks:
-> *"Hey, show me the `http_requests_total` and `latency` for `service="payment-service"` around the time of the deployment."*
+### 2. The "Intent" Annotation (Required)
+To prevent Valiant from recording accidental or manual changes (like a human typing `kubectl edit`), your Deployment **must** include this annotation:
 
-**Crucial Rule:** Your Prometheus metrics **must** have a label (like `service`, `app`, or `job`) that matches the name in the Change Event. If the names match, the correlation works automatically.
+```yaml
+metadata:
+  annotations:
+    valiant.io/source: "argocd" # or "helm", "cicd"
+```
 
-### 2. Running inside Kubernetes
-If you deploy Valiant into the same Kubernetes/OpenShift cluster as your apps, here is how it gathers data without you doing anything:
+If this is missing, Valiant will ignore the rollout.
 
-*   **Gathering Deployments:** Valiant uses a standard **ServiceAccount**. It talks to the Kubernetes API (just like `kubectl` does) and watches for changes. When you run `kubectl apply` or a Helm upgrade, Valiant sees the Deployment update and records it.
-*   **Gathering Metrics:** Valiant sends HTTP requests to your internal Prometheus service (e.g., `http://prometheus-k8s.monitoring.svc:9090`). It doesn't need to touch your pods directly; it just reads the data Prometheus has already scraped.
+### 2. The "Unique Fingerprint" (Requirement)
+Static annotations like `valiant.io/source: "argocd"` only prove who *owns* the app. To prevent Valiant from recording a manual `kubectl edit`, your automation **must** provide a unique fingerprint for every change (like a Git SHA or Build ID).
 
-**Summary:** You don't need to change your application code. As long as you have standard Prometheus monitoring, Valiant acts as the "detective" connecting the clues (deployments) to the evidence (metrics).
+**How it works:**
+- **Automated Sync:** Your CI/CD updates the `valiant.io/git-sha`. Valiant sees a new SHA and records the event. ✅
+- **Manual Edit:** A human edits the CPU limit. The SHA remains the same. Valiant sees the mismatch and **ignores** the change as "Unintentional." 🛑
 
 ---
 
 ## 📥 Ingesting Data
 
-### Via REST API
-You can push events directly to Valiant from your CI/CD pipelines or scripts.
+### Via Kubernetes (Automated)
+If Valiant is in your cluster, it watches the Kubernetes API. It automatically detects when a Deployment generation changes and a new ReplicaSet appears. It waits for the "Available" signal before creating the event.
+
+### Via REST API (CI Signals)
+You can signal the start of a pipeline to record the **Intent** part of the story:
 
 ```bash
 curl -X POST http://localhost:8080/api/v1/events \
   -H "Content-Type: application/json" \
   -d '{
-    "id": "prod-deploy-123",
-    "source": "ci-cd",
-    "change_type": "deployment",
-    "timestamp": "'$(date -u +"%Y-%m-%dT%H:%M:%SZ")'",
-    "affected_services": ["payment-service"],
-    "summary": "Deploying payment-service v2.4.0",
-    "metadata": {
-      "author": "dev-team",
-      "commit": "a1b2c3d"
-    }
+    "trigger_type": "CI",
+    "summary": "Building payment-service v2.4.0",
+    "metadata": { "git_sha": "a1b2c3d" }
   }'
 ```
-
-### Via Collectors (Automated)
-Valiant includes built-in collectors that can poll for changes:
-
-- **Kubernetes Collector:** Watches for `NewReplicaSetAvailable` conditions in your cluster.
-- **Git Collector:** Inspects a local repository for new tags.
-
-*Note: Collectors require appropriate environment configuration (KUBECONFIG path, Repo path) in the backend settings.*
 
 ---
 
 ## 📊 Using the Dashboard
 
-1.  **Timeline:** View a chronological list of all recent system changes.
-2.  **Refresh:** Use the refresh button to pull the latest events from the database.
-3.  **Analyze:** Click the **"Analyze"** button on any event to trigger the correlation engine.
-4.  **Inspect Deltas:** Review the color-coded metric cards to see exactly which metrics shifted after the change.
-    - 🔴 **Red:** Metric degraded (e.g., Error Rate increased).
-    - 🟢 **Green:** Metric improved or decreased (e.g., Latency dropped).
-    - ⚪ **Grey:** No significant change.
-
-## 📈 Understanding the Metrics
-
-When you see a **Metric Shift**, it shows the percentage change compared to the period before the event.
-
-| Metric | What it measures | Why it matters |
-| :--- | :--- | :--- |
-| **Errors** | HTTP 5xx responses | **High Impact:** An increase here means your change is likely causing crashes or broken logic. |
-| **Latency** | P95 Response Time | **User Experience:** If this goes up, your app is slower. Users might experience lag or timeouts. |
-| **RPS** | Requests Per Second | **Traffic Flow:** A sudden drop could mean a upstream service is failing to reach your app. |
-| **CPU** | Processor Usage | **Efficiency:** If this spikes without an RPS increase, your new code might have an infinite loop or high complexity. |
-| **Memory** | RAM Consumption | **Stability:** If this keeps growing, your app might eventually crash due to Out-of-Memory (OOM) errors. |
+1.  **Timeline:** Chronological list of execution boundaries.
+2.  **Pending State:** If a deployment just finished, you'll see a **"Pending"** badge. You must wait for the observation window (default 30m) to close before you can see the results.
+3.  **Analyze:** Trigger the calculation. Results are **Snapshotted**—meaning they are frozen in time and won't change even if you deploy something else later.
+4.  **Confidence Score:** A high score (Shield icon) means there was enough traffic (RPS) to make the percentage deltas statistically reliable.
 
 ---
 
-## ⚙️ Configuration
+## 📈 Understanding the Metrics
 
-Valiant is configured via environment variables in `docker-compose.yml`:
-
-| Variable | Description | Default |
+| Metric | Measures | Why it matters |
 | :--- | :--- | :--- |
-| `DATABASE_URL` | PostgreSQL connection string | `postgres://...` |
-| `PROMETHEUS_URL` | URL of your Prometheus instance | `http://localhost:9090` |
-| `PORT` | Backend API port | `8080` |
-| `NEXT_PUBLIC_API_URL` | API URL for the frontend | `http://localhost:8080/api/v1` |
-
+| **Errors** | 5xx Rate | **Stability:** Direct signal of crashes or broken logic. |
+| **Latency** | P95 Speed | **Experience:** High values mean your app is lagging. |
+| **RPS** | Traffic | **Flow:** A sudden drop might mean users can't reach you. |
+| **CPU/Mem** | Resources | **Efficiency:** Spikes here indicate potential leaks or regressions. |

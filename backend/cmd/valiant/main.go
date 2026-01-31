@@ -1,13 +1,16 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"log"
 	"net/http"
 	"valiant/internal/api"
+	"valiant/internal/collector"
 	"valiant/internal/config"
 	"valiant/internal/correlator"
+	"valiant/internal/domain"
 	"valiant/internal/metrics"
 	"valiant/internal/storage"
 
@@ -50,13 +53,48 @@ func main() {
 	}
 	fmt.Println("Database migrations applied")
 
-	metricClient, err := metrics.NewPrometheusClient(cfg.Prometheus.URL)
+	metricClient, err := metrics.NewPrometheusClient(cfg.Prometheus.URL, cfg.Prometheus.Queries)
 	if err != nil {
 		log.Fatalf("Failed to initialize prometheus client: %v", err)
 	}
 
 	engine := correlator.NewEngine(store, metricClient, cfg)
 	router := api.NewRouter(store, engine)
+
+	// Setup application context
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Start Background Worker (Automatic Analysis)
+	worker := correlator.NewWorker(engine)
+	go worker.Start(ctx)
+
+	// Start Collectors
+	eventChan := make(chan domain.ChangeEvent, 100)
+
+	// Processor loop: Save events from channel
+	go func() {
+		for event := range eventChan {
+			log.Printf("Received event: %s (%s)", event.Summary, event.ID)
+			if err := store.SaveChangeEvent(ctx, event); err != nil {
+				log.Printf("Failed to save event: %v", err)
+			}
+		}
+	}()
+
+	if cfg.Kubernetes.Enabled {
+		k8sCollector, err := collector.NewKubernetesCollector(*cfg, nil)
+		if err != nil {
+			log.Printf("Failed to initialize Kubernetes collector: %v", err)
+		} else {
+			go func() {
+				log.Println("Starting Kubernetes collector...")
+				if err := k8sCollector.Start(ctx, eventChan); err != nil {
+					log.Printf("Kubernetes collector stopped with error: %v", err)
+				}
+			}()
+		}
+	}
 
 	server := &http.Server{
 		Addr:    ":" + cfg.Port,

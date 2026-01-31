@@ -203,6 +203,61 @@ func (s *PostgresStorage) GetServices(ctx context.Context) ([]string, error) {
 	return services, nil
 }
 
+func (s *PostgresStorage) GetEventsPendingAnalysis(ctx context.Context) ([]domain.ChangeEvent, error) {
+	query := `
+		SELECT e.id, e.source, e.trigger_type, e.execution_id, e.change_type, e.timestamp, e.end_time, e.affected_services, e.metadata, e.summary
+		FROM change_events e
+		LEFT JOIN impact_analysis_snapshots s ON e.id = s.event_id
+		WHERE s.event_id IS NULL
+		ORDER BY e.timestamp DESC
+		LIMIT 50
+	`
+
+	rows, err := s.db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query pending events: %w", err)
+	}
+	defer rows.Close()
+
+	var events []domain.ChangeEvent
+	for rows.Next() {
+		var event domain.ChangeEvent
+		var metadataJSON []byte
+		var affectedServices pq.StringArray
+		var triggerType, executionID sql.NullString
+		var endTime sql.NullTime
+
+		err := rows.Scan(
+			&event.ID,
+			&event.Source,
+			&triggerType,
+			&executionID,
+			&event.ChangeType,
+			&event.Timestamp,
+			&endTime,
+			&affectedServices,
+			&metadataJSON,
+			&event.Summary,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		event.TriggerType = triggerType.String
+		event.ExecutionID = executionID.String
+		if endTime.Valid {
+			t := endTime.Time
+			event.EndTime = &t
+		}
+		event.AffectedServices = []string(affectedServices)
+		json.Unmarshal(metadataJSON, &event.Metadata)
+
+		events = append(events, event)
+	}
+
+	return events, nil
+}
+
 func (s *PostgresStorage) SaveImpactAnalysis(ctx context.Context, analysis domain.ImpactAnalysis) error {
 	query := `
 		INSERT INTO impact_analysis_snapshots 

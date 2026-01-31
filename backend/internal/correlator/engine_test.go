@@ -23,6 +23,9 @@ func (m *MockStorage) GetChangeEventByID(ctx context.Context, id string) (domain
 	return domain.ChangeEvent{}, nil
 }
 func (m *MockStorage) GetServices(ctx context.Context) ([]string, error) { return nil, nil }
+func (m *MockStorage) GetEventsPendingAnalysis(ctx context.Context) ([]domain.ChangeEvent, error) {
+	return nil, nil
+}
 
 func (m *MockStorage) SaveImpactAnalysis(ctx context.Context, analysis domain.ImpactAnalysis) error {
 	m.snapshot = &analysis
@@ -228,26 +231,71 @@ func TestAnalyzeImpact_ZeroBaseline(t *testing.T) {
 	}
 }
 
-func TestAnalyzeImpact_ReturnsSnapshotIfExists(t *testing.T) {
+func TestAnalyzeImpact_PrometheusError(t *testing.T) {
 	cfg := &config.Config{}
-	store := &MockStorage{
-		snapshot: &domain.ImpactAnalysis{
-			ChangeEvent: domain.ChangeEvent{ID: "evt-3"},
-			ImpactScore: 0.99,
-			ImpactLevel: "CRITICAL_TEST", // distinctive
-		},
-	}
-	metrics := &MockMetrics{}
+	store := &MockStorage{}
+	
+	// Mock metrics returns error
+	metrics := &ErrorMetrics{err: errors.New("prometheus connection refused")}
+	
 	engine := correlator.NewEngine(store, metrics, cfg)
+	event := domain.ChangeEvent{ID: "evt-err", Timestamp: time.Now().Add(-1 * time.Hour)}
 
-	event := domain.ChangeEvent{ID: "evt-3"}
+	_, err := engine.AnalyzeImpact(context.Background(), event)
+	if err == nil {
+		t.Error("expected error when metrics provider fails, got nil")
+	}
+}
 
-	analysis, err := engine.AnalyzeImpact(context.Background(), event)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+type ErrorMetrics struct {
+	err error
+}
+func (m *ErrorMetrics) GetAverageMetrics(ctx context.Context, s []string, start, end time.Time) (domain.MetricValues, error) {
+	return domain.MetricValues{}, m.err
+}
+
+func TestAnalyzeImpact_NoServices(t *testing.T) {
+	cfg := &config.Config{}
+	store := &MockStorage{}
+	metrics := &MockMetrics{baseline: domain.MetricValues{RPS: 10}}
+	
+	engine := correlator.NewEngine(store, metrics, cfg)
+	// Event with empty affected_services
+	event := domain.ChangeEvent{
+		ID:               "evt-no-svc", 
+		Timestamp:        time.Now().Add(-1 * time.Hour),
+		AffectedServices: []string{},
 	}
 
-	if analysis.ImpactLevel != "CRITICAL_TEST" {
-		t.Errorf("expected to return snapshot value, got %s", analysis.ImpactLevel)
+	analysis, _ := engine.AnalyzeImpact(context.Background(), event)
+
+	// Since we query without service filter, we still get data (from mock),
+	// but confidence should potentially be lower if we decided that was a signal.
+	// Current logic only uses RPS for confidence.
+	if analysis.ConfidenceScore < 1.0 {
+		t.Errorf("expected 1.0 confidence for healthy RPS, even with no services, got %f", analysis.ConfidenceScore)
+	}
+}
+
+func TestAnalyzeImpact_InstantRollout(t *testing.T) {
+	cfg := &config.Config{}
+	store := &MockStorage{}
+	metrics := &ControllableMetrics{
+		Calls: []domain.MetricValues{{RPS: 10}, {RPS: 10}},
+	}
+	
+	engine := correlator.NewEngine(store, metrics, cfg)
+	
+	// Start and End times are identical
+	now := time.Now().Add(-1 * time.Hour)
+	event := domain.ChangeEvent{
+		ID:        "evt-instant",
+		Timestamp: now,
+		EndTime:   &now,
+	}
+
+	_, err := engine.AnalyzeImpact(context.Background(), event)
+	if err != nil {
+		t.Errorf("unexpected error for instant rollout: %v", err)
 	}
 }

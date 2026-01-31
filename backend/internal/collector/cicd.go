@@ -15,10 +15,12 @@ func NewCICDCollector(webhookSecret string) *CICDCollector {
 	}
 }
 
-func (c *CICDCollector) Collect(ctx context.Context) ([]domain.ChangeEvent, error) {
+func (c *CICDCollector) Start(ctx context.Context, eventChan chan<- domain.ChangeEvent) error {
 	// CICD changes are usually pushed via webhook, so this might be a no-op 
 	// or it might poll a CI system's API.
-	return []domain.ChangeEvent{}, nil
+	// For webhooks, the API handler (router.go) receives them directly.
+	// This collector could be used for polling if needed.
+	return nil
 }
 
 func (c *CICDCollector) Name() string {

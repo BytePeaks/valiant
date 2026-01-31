@@ -58,14 +58,19 @@ func (e *Engine) AnalyzeImpact(ctx context.Context, event domain.ChangeEvent) (d
 	baselineDur := e.config.Analysis.BaselineDur
 	impactDur := e.config.Analysis.ImpactDur
 
-	// Baseline: e.g., 30m to 5m before event
-	// Note: We keep the 5m buffer gap to avoid the "noisy" moment of deployment itself
+	// Baseline: e.g., 30m to 5m before the execution STARTED
 	baselineStart := event.Timestamp.Add(-(baselineDur))
 	baselineEnd := event.Timestamp.Add(-5 * time.Minute)
 
-	// Impact: e.g., 5m to 35m after event (if duration is 30m)
-	impactStart := event.Timestamp.Add(5 * time.Minute)
-	impactEnd := event.Timestamp.Add(5 * time.Minute).Add(impactDur)
+	// Impact Pivot: Use EndTime (rollout finished) if available, otherwise fallback to Timestamp
+	impactPivot := event.Timestamp
+	if event.EndTime != nil {
+		impactPivot = *event.EndTime
+	}
+
+	// Impact: e.g., 5m to 35m after the execution FINISHED
+	impactStart := impactPivot.Add(5 * time.Minute)
+	impactEnd := impactPivot.Add(5 * time.Minute).Add(impactDur)
 
 	// Check if impact window has closed
 	if time.Now().UTC().Before(impactEnd) {

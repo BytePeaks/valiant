@@ -40,19 +40,17 @@ send_event() {
   echo " Sent: $summary"
 }
 
-# Generate 12 events
+# Generate 10 events
 send_event "Deployment of payment-service v2.4.0" "GitOps" "deployment_rollout" '["payment-service"]' "5 minutes ago"
 send_event "CI Pipeline #452: Merge & Test" "CI" "pipeline_success" '["payment-service", "order-service"]' "15 minutes ago"
 send_event "Updated configmap payment-config" "GitOps" "configmap_update" '["payment-service"]' "45 minutes ago"
-send_event "Manual rollback of order-service" "manual" "rollback" '["order-service"]' "1 hour ago"
 send_event "Deployment of inventory-service v1.1.0" "GitOps" "deployment_rollout" '["inventory-service"]' "2 hours ago"
 send_event "Database schema migration (users)" "CI" "migration" '["payment-service", "user-service"]' "3 hours ago"
 send_event "Canary Release: payment-service v2.5.0-rc1" "GitOps" "canary_start" '["payment-service"]' "4 hours ago"
-send_event "Manual cache flush (redis)" "manual" "ops_action" '["inventory-service"]' "5 hours ago"
 send_event "Deployment of order-service v3.0.1" "GitOps" "deployment_rollout" '["order-service"]' "1 day ago"
 send_event "CI Pipeline #440: Nightly Build" "CI" "pipeline_success" '["payment-service", "order-service", "inventory-service"]' "1 day 2 hours ago"
-send_event "Hotfix: payment-service gateway timeout" "manual" "hotfix" '["payment-service"]' "2 days ago"
 send_event "Infrastructure scale-up (node pool)" "GitOps" "infra_scale" '["cluster-nodes"]' "3 days ago"
+send_event "Canary Release: order-service v3.1.0-beta" "GitOps" "canary_start" '["order-service"]' "4 days ago"
 
 echo "Done seeding."
 

@@ -18,7 +18,8 @@ import {
   Loader2,
   ShieldCheck,
   Hourglass,
-  Tag
+  Tag,
+  Bot
 } from 'lucide-react';
 
 interface TimelineEventProps {
@@ -49,12 +50,10 @@ export default function TimelineEvent({ event }: TimelineEventProps) {
     // Fallback to source if trigger_type is missing (for old data)
     const type = event.trigger_type || event.source;
     switch (type?.toLowerCase()) {
-      case 'gitops': return <Box className="w-4 h-4" />;
+      case 'gitops': return <GitBranch className="w-4 h-4" />;
       case 'kubernetes': return <Box className="w-4 h-4" />;
-      case 'git': return <GitBranch className="w-4 h-4" />;
-      case 'ci': return <Terminal className="w-4 h-4" />;
-      case 'ci-cd': return <Terminal className="w-4 h-4" />;
-      case 'manual': return <Zap className="w-4 h-4" />;
+      case 'ci': return <Bot className="w-4 h-4" />;
+      case 'ci-cd': return <Bot className="w-4 h-4" />;
       default: return <Info className="w-4 h-4" />;
     }
   };
@@ -76,7 +75,7 @@ export default function TimelineEvent({ event }: TimelineEventProps) {
               {timeAgo(new Date(event.timestamp))}
             </span>
             {event.affected_services?.map(service => (
-              <span key={service} className="flex items-center gap-1 px-2 py-0.5 bg-slate-100 text-slate-600 text-[10px] font-bold rounded-full border border-slate-200">
+              <span key={service} className="flex items-center gap-1 px-2 py-0.5 bg-emerald-50 text-emerald-600 text-[10px] font-bold rounded-full border border-emerald-100">
                 <Tag className="w-2 h-2" />
                 {service}
               </span>
@@ -142,7 +141,7 @@ export default function TimelineEvent({ event }: TimelineEventProps) {
               <Activity className="w-3 h-3" />
               Metric Shifts (vs Baseline)
             </h4>
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3 mb-6">
                <MetricDelta 
                  label="Errors" 
                  delta={analysis.deltas.error_rate} 
@@ -174,6 +173,21 @@ export default function TimelineEvent({ event }: TimelineEventProps) {
                  icon={<Database className="w-3 h-3" />} 
                  description="Memory usage relative to limit. High increase risks OOM kills."
                />
+            </div>
+
+            {/* Metadata Section */}
+            <div className="bg-slate-50 rounded-xl p-4 border border-slate-100">
+              <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3">Execution Metadata</h4>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-2">
+                {Object.entries(event.metadata || {}).map(([key, value]) => (
+                  <div key={key} className="flex justify-between items-center py-1 border-b border-slate-200 last:border-0">
+                    <span className="text-[10px] font-semibold text-slate-500 uppercase">{key.replace('_', ' ')}</span>
+                    <span className={`text-xs font-mono truncate max-w-[200px] ${key === 'git_sha' ? 'text-blue-600 font-bold' : 'text-slate-700'}`} title={value}>
+                      {value || 'n/a'}
+                    </span>
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
         </div>

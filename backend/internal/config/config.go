@@ -11,11 +11,19 @@ type Config struct {
 	DatabaseURL string `yaml:"database_url"`
 	Port        string `yaml:"port"`
 	Prometheus  struct {
-		URL string `yaml:"url"`
+		URL     string            `yaml:"url"`
+		Queries map[string]string `yaml:"queries"`
 	} `yaml:"prometheus"`
+	Kubernetes struct {
+		Enabled           bool     `yaml:"enabled"`
+		KubeConfigPath    string   `yaml:"kube_config_path"`
+		Namespaces        []string `yaml:"namespaces"`
+		RequireAnnotation bool     `yaml:"require_annotation"`
+		AllowedSources    []string `yaml:"allowed_sources"`
+	} `yaml:"kubernetes"`
 	Analysis struct {
 		BaselineWindow string        `yaml:"baseline_window"` // e.g., "30m"
-		ImpactWindow   string        `yaml:"impact_window"`   // e.g., "30m"
+		ImpactWindow   string        `yaml:"post_execution_impact_window"`
 		BaselineDur    time.Duration `yaml:"-"`
 		ImpactDur      time.Duration `yaml:"-"`
 	} `yaml:"analysis"`
@@ -28,6 +36,13 @@ func Load(configPath string) (*Config, error) {
 		Port:        GetEnv("PORT", "8080"),
 	}
 	cfg.Prometheus.URL = GetEnv("PROMETHEUS_URL", "http://localhost:9090")
+	cfg.Prometheus.Queries = map[string]string{
+		"error_rate":        `avg_over_time(sum(rate(http_requests_total{service=~"{{ .Services }}",status=~"5.."}[1m]))[{{ .Duration }}])`,
+		"latency_p95":       `avg_over_time(histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{service=~"{{ .Services }}"}[1m])))[{{ .Duration }}])`,
+		"rps":              `avg_over_time(sum(rate(http_requests_total{service=~"{{ .Services }}"}[1m]))[{{ .Duration }}])`,
+		"cpu_saturation":    `avg_over_time(sum(rate(container_cpu_usage_seconds_total{container=~"{{ .Services }}"}[1m]))[{{ .Duration }}])`,
+		"memory_saturation": `avg_over_time(sum(container_memory_usage_bytes{container=~"{{ .Services }}"})[{{ .Duration }}])`,
+	}
 	cfg.Analysis.BaselineWindow = "30m"
 	cfg.Analysis.ImpactWindow = "30m"
 

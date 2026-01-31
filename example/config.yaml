@@ -1,19 +1,60 @@
 # Valiant Backend Configuration
+# -----------------------------
 
 # Database Connection (Can be overridden by DATABASE_URL env var)
+# Ensure the database exists and the schema migrations are applied.
 database_url: "postgres://valiant:valiant_password@postgres:5432/valiant?sslmode=disable"
 
 # Backend Server Port
 port: "8080"
 
 # Prometheus Configuration
+# ------------------------
 prometheus:
-  url: "http://host.docker.internal:9090" # Use host.docker.internal for local Prom, or http://prometheus:9090 if in compose
+  # The URL where Prometheus can be reached.
+  # Use http://host.docker.internal:9090 for local Prometheus on Windows/Mac Docker.
+  url: "http://prometheus:9090"
+
+  # Custom PromQL Query Templates
+  # You can override the default queries here to match your specific exporters or labels.
+  # Available variables:
+  #   {{ .Services }} - Regex-friendly list of services (e.g., "svc-a|svc-b")
+  #   {{ .Duration }} - The analysis window duration (e.g., "30m")
+  #
+  # queries:
+  #   error_rate: `avg_over_time(sum(rate(http_requests_total{service=~"{{ .Services }}",status=~"5.."}[1m]))[{{ .Duration }}])`
+  #   latency_p95: `avg_over_time(histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{service=~"{{ .Services }}"}[1m])))[{{ .Duration }}])`
+  #   rps: `avg_over_time(sum(rate(http_requests_total{service=~"{{ .Services }}"}[1m]))[{{ .Duration }}])`
+  #   cpu_saturation: `avg_over_time(sum(rate(container_cpu_usage_seconds_total{container=~"{{ .Services }}"}[1m]))[{{ .Duration }}])`
+  #   memory_saturation: `avg_over_time(sum(container_memory_usage_bytes{container=~"{{ .Services }}"})[{{ .Duration }}])`
+
+# Kubernetes Collector Configuration
+# ----------------------------------
+kubernetes:
+  # Toggle the automatic Kubernetes event collector.
+  enabled: true
+
+  # Path to kubeconfig for local development. Leave empty for In-Cluster config.
+  kube_config_path: "" 
+
+  # List of namespaces to watch. Leave empty to watch ALL namespaces.
+  # NOTE: Cross-namespace visibility requires a ClusterRole (See FEATURES_PLAN.md).
+  # If running without a ClusterRole, this will only work for the same namespace Valiant is in.
+  namespaces: ["default", "payment-app"]
+
+  # Auditor Logic: Only record rollouts that are intentional and automated.
+  # Requires the 'valiant.io/source' annotation on the Deployment.
+  require_annotation: true
+
+  # Trusted sources for the 'valiant.io/source' annotation.
+  allowed_sources: ["argocd", "helm", "cicd"]
 
 # Analysis Window Configuration
+# -----------------------------
 analysis:
-  # Duration to look back before the event to establish baseline
+  # Duration to look back BEFORE the execution started to establish health baseline.
   baseline_window: "30m"
   
-  # Duration to look forward after the event to measure impact
-  impact_window: "30m"
+  # Duration to look forward AFTER the execution finished to measure stability impact.
+  # This captures post-deploy issues like memory leaks, cache warmup, or slow crashes.
+  post_execution_impact_window: "30m"
