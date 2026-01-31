@@ -3,15 +3,19 @@
 import { useEffect, useState } from 'react';
 import { ChangeEvent, fetchChangeEvents, fetchServices } from '@/lib/api';
 import Timeline from '@/components/timeline/timeline';
-import { RefreshCcw, Filter, ExternalLink } from 'lucide-react';
+import { RefreshCcw, Filter, ExternalLink, ChevronDown, ChevronUp } from 'lucide-react';
 import Link from 'next/link';
 
 export default function Home() {
   const [events, setEvents] = useState<ChangeEvent[]>([]);
   const [services, setServices] = useState<string[]>([]);
   const [selectedService, setSelectedService] = useState<string | null>(null);
+  // @TODO: Replace with actual namespace data and API call
+  const [namespaces, setNamespaces] = useState<string[]>(['production', 'staging']);
+  const [selectedNamespace, setSelectedNamespace] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [visibleCount, setVisibleCount] = useState(5);
+  const [filtersVisible, setFiltersVisible] = useState(true);
 
   const fetchData = () => {
     setLoading(true);
@@ -47,41 +51,82 @@ export default function Home() {
           <p className="text-gray-500 font-medium">Change Impact Radar for Teams</p>
         </header>
 
-        {/* Service Filter */}
+
         <section className="mb-12">
-          <div className="flex items-center gap-2 mb-4 text-sm font-bold text-gray-400 uppercase tracking-widest">
-            <Filter className="w-3 h-3" />
-            Filter by Service
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <button
-              onClick={() => setSelectedService(null)}
-              className={`px-4 py-1.5 rounded-full text-xs font-bold transition-all border ${!selectedService ? 'bg-blue-600 border-blue-600 text-white' : 'bg-white border-gray-200 text-gray-600 hover:border-blue-300'}`}
-            >
-              All Services
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-2 text-sm font-bold text-gray-400 uppercase tracking-widest">
+              <Filter className="w-3 h-3" />
+              <span>Filters</span>
+            </div>
+            <button onClick={() => setFiltersVisible(!filtersVisible)} className="p-1 rounded-full hover:bg-gray-200">
+              {filtersVisible ? <ChevronUp className="w-4 h-4 text-gray-500" /> : <ChevronDown className="w-4 h-4 text-gray-500" />}
             </button>
-            {services.map(service => (
-              <div 
-                key={service} 
-                className={`flex items-center gap-2 px-4 py-1.5 rounded-full text-xs font-bold transition-all border ${selectedService === service ? 'bg-blue-600 border-blue-600 text-white' : 'bg-white border-gray-200 text-gray-600 hover:border-blue-300'}`}
-              >
-                <button
-                  onClick={() => setSelectedService(service === selectedService ? null : service)}
-                  className="focus:outline-none"
-                >
-                  {service}
-                </button>
-                <Link 
-                  href={`/services/${encodeURIComponent(service)}`}
-                  className={`p-0.5 rounded-full transition-colors ${selectedService === service ? 'hover:bg-blue-500 text-blue-100' : 'hover:bg-gray-100 text-gray-400'}`}
-                  title={`Go to ${service} dashboard`}
-                >
-                  <ExternalLink className="w-3 h-3" />
-                </Link>
-              </div>
-            ))}
           </div>
+
+          {filtersVisible && (
+            <div>
+              {/* Namespace Filter (NO-OP) */}
+              <section className="mb-8">
+                <div className="flex items-center gap-2 mb-4 text-xs font-bold text-gray-400 uppercase tracking-widest">
+                  Filter by Namespace
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    onClick={() => setSelectedNamespace(null)}
+                    className={`px-4 py-1.5 rounded-full text-xs font-bold transition-all border ${!selectedNamespace ? 'bg-blue-600 border-blue-600 text-white' : 'bg-white border-gray-200 text-gray-600 hover:border-blue-300'}`}
+                  >
+                    All Namespaces
+                  </button>
+                  {namespaces.map(namespace => (
+                    <button
+                      key={namespace}
+                      onClick={() => setSelectedNamespace(namespace === selectedNamespace ? null : namespace)}
+                      className={`px-4 py-1.5 rounded-full text-xs font-bold transition-all border ${selectedNamespace === namespace ? 'bg-blue-600 border-blue-600 text-white' : 'bg-white border-gray-200 text-gray-600 hover:border-blue-300'}`}
+                    >
+                      {namespace}
+                    </button>
+                  ))}
+                </div>
+              </section>
+
+              {/* Service Filter */}
+              <section>
+                <div className="flex items-center gap-2 mb-4 text-xs font-bold text-gray-400 uppercase tracking-widest">
+                  Filter by Service
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    onClick={() => setSelectedService(null)}
+                    className={`px-4 py-1.5 rounded-full text-xs font-bold transition-all border ${!selectedService ? 'bg-blue-600 border-blue-600 text-white' : 'bg-white border-gray-200 text-gray-600 hover:border-blue-300'}`}
+                  >
+                    All Services
+                  </button>
+                  {services.map(service => (
+                    <div 
+                      key={service} 
+                      className={`flex items-center gap-2 px-4 py-1.5 rounded-full text-xs font-bold transition-all border ${selectedService === service ? 'bg-blue-600 border-blue-600 text-white' : 'bg-white border-gray-200 text-gray-600 hover:border-blue-300'}`}
+                    >
+                      <button
+                        onClick={() => setSelectedService(service === selectedService ? null : service)}
+                        className="focus:outline-none"
+                      >
+                        {service}
+                      </button>
+                      <Link 
+                        href={`/services/${encodeURIComponent(service)}`}
+                        className={`p-0.5 rounded-full transition-colors ${selectedService === service ? 'hover:bg-blue-500 text-blue-100' : 'hover:bg-gray-100 text-gray-400'}`}
+                        title={`Go to ${service} dashboard`}
+                      >
+                        <ExternalLink className="w-3 h-3" />
+                      </Link>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            </div>
+          )}
         </section>
+
         
         <section>
           <div className="flex justify-between items-center mb-8 bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
