@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Initialized Valiant project structure.
 - **Backend (Go):**
   - Implemented **Orphan Event Detection**: Execution events (e.g., GitOps, manual) without a corresponding intent event (e.g., CI) within a configurable correlation window are now marked as `IsOrphaned`.
+  - **Intent-Execution Linking**: Implemented backend logic to link CI (Intent) and GitOps/manual (Execution) events using `git_sha` or `image_tag` within a configurable `intent_execution_correlation_window`. This replaces the previous `IsOrphaned` check based solely on services.
+  - Extended `PostgresStorage.GetChangeEvents` to support filtering by metadata content (`git_sha` or `image_tag`).
+  - Renamed `OrphanCorrelationWindow` to `IntentExecutionCorrelationWindow` in configuration for clarity.
   - Extended `PostgresStorage.GetChangeEvents` to support filtering by trigger type, time range, and affected services.
   - Added `IsOrphaned` field to `domain.ImpactAnalysis` for API response.
   - Added `OrphanCorrelationWindow` configuration to `config.yaml`.

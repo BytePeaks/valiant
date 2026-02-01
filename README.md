@@ -21,7 +21,7 @@ Valiant solves a critical problem for engineering teams: quickly identifying the
 
 To use Valiant effectively, it helps to understand these key principles and the analysis flow:
 
-- A **ChangeEvent** represents when a change becomes *effective* in an environment (e.g., a deployment finishes), not when it was committed to source control.
+- A **ChangeEvent** represents when a change becomes *effective* in an environment (e.g., a deployment finishes), not when it was committed to source control. It differentiates between **Intent** (e.g., a CI build) and **Execution** (e.g., a GitOps deployment) events, which can be linked based on shared metadata like Git SHAs or image tags.
 - An **Impact Analysis** is an immutable, reproducible snapshot. An analysis performed today will yield the exact same result a year from now.
 - **Correlation** is scoped to explicit, rule-based time windows (a "baseline" before the change and an "impact" window after). It is never inferred or predictive.
 
@@ -51,6 +51,7 @@ Valiant fits into the observability landscape by providing a focused, determinis
 ## Features
 
 - **Change Collection**: Ingests change events from various sources, including Kubernetes (deployments, configmaps, secrets), and generic CI/CD webhooks.
+- **Intent-Execution Linking**: Automatically correlates CI (Intent) and GitOps/manual (Execution) events using shared metadata (Git SHAs, image tags) within a configurable time window, providing a clearer picture of the change lineage.
 - **Core Correlation Engine**: Implements a complete, deterministic impact scoring and ranking logic to link changes to service degradation.
 - **Single Environment Support**: The Open Source (OSS) version is designed to target a single Kubernetes cluster and Prometheus instance.
 - **Manual Analysis**: All correlation analyses are user-initiated via the UI or API, providing on-demand insights.

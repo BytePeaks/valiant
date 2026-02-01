@@ -58,24 +58,36 @@ func (e *Engine) AnalyzeImpact(ctx context.Context, event domain.ChangeEvent) (d
 		ChangeEvent: event,
 	}
 
-	// 2. Orphan detection
+	// 2. Intent/Execution Linking (formerly Orphan Detection)
 	isExecutionEvent := event.TriggerType == "GitOps" || event.TriggerType == "manual"
-	if isExecutionEvent {
-		// Look for a corresponding CI event in the correlation window
-		from := event.Timestamp.Add(-e.config.Analysis.OrphanCorrelationDur)
+	if isExecutionEvent && (event.Metadata["git_commit_sha"] != "" || event.Metadata["image_tag"] != "") {
+		// This is an execution event with linking metadata. Look for a corresponding CI event.
+		from := event.Timestamp.Add(-e.config.Analysis.IntentExecutionCorrelationDur)
 		to := event.Timestamp
+		
+		metadataToLink := make(map[string]string)
+		if sha, ok := event.Metadata["git_commit_sha"]; ok && sha != "" {
+			metadataToLink["git_commit_sha"] = sha
+		}
+		if tag, ok := event.Metadata["image_tag"]; ok && tag != "" {
+			metadataToLink["image_tag"] = tag
+		}
+
 		ciEvents, err := e.storage.GetChangeEvents(ctx, map[string]interface{}{
-			"trigger_type":    "CI",
-			"from_timestamp":  from,
-			"to_timestamp":    to,
-			"services_any_of": event.AffectedServices,
+			"trigger_type":     "CI",
+			"from_timestamp":   from,
+			"to_timestamp":     to,
+			"metadata_has_any": metadataToLink,
 		})
 		if err != nil {
-			return domain.ImpactAnalysis{}, fmt.Errorf("failed to check for orphan event: %w", err)
+			return domain.ImpactAnalysis{}, fmt.Errorf("failed to check for corresponding CI event: %w", err)
 		}
 		if len(ciEvents) == 0 {
 			analysis.IsOrphaned = true
 		}
+	} else if isExecutionEvent {
+		// Fallback for execution events without linking metadata
+		analysis.IsOrphaned = true
 	}
 
 	// 3. Define time windows relative to the change event using Config

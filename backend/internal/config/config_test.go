@@ -41,7 +41,7 @@ port: "7070"
 analysis:
   baseline_window: "15m"
   post_execution_impact_window: "1h"
-  orphan_correlation_window: "2h"
+  intent_execution_correlation_window: "2h"
 `
 	tmpFile := "test_config.yaml"
 	err := os.WriteFile(tmpFile, []byte(yamlContent), 0644)
@@ -64,8 +64,8 @@ analysis:
 	if cfg.Analysis.ImpactDur != 1*time.Hour {
 		t.Errorf("expected impact 1h, got %v", cfg.Analysis.ImpactDur)
 	}
-	if cfg.Analysis.OrphanCorrelationDur != 2*time.Hour {
-		t.Errorf("expected orphan correlation 2h, got %v", cfg.Analysis.OrphanCorrelationDur)
+	if cfg.Analysis.IntentExecutionCorrelationDur != 2*time.Hour {
+		t.Errorf("expected orphan correlation 2h, got %v", cfg.Analysis.IntentExecutionCorrelationDur)
 	}
 }
 

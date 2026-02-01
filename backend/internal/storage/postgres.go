@@ -98,6 +98,17 @@ func (s *PostgresStorage) GetChangeEvents(ctx context.Context, filters map[strin
 		args = append(args, to)
 		argCount++
 	}
+	if metadata, ok := filters["metadata_has_any"].(map[string]string); ok && len(metadata) > 0 {
+		var metadataClauses []string
+		for key, value := range metadata {
+			metadataClauses = append(metadataClauses, fmt.Sprintf("metadata @> $%d", argCount))
+			jsonFilter := fmt.Sprintf(`{"%s": "%s"}`, key, value)
+			args = append(args, jsonFilter)
+			argCount++
+		}
+		whereClauses = append(whereClauses, "("+strings.Join(metadataClauses, " OR ")+")")
+	}
+
 	if services, ok := filters["services_any_of"].([]string); ok && len(services) > 0 {
 		whereClauses = append(whereClauses, fmt.Sprintf("affected_services && $%d", argCount))
 		args = append(args, pq.Array(services))

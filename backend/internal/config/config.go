@@ -26,8 +26,8 @@ type Config struct {
 		ImpactWindow   string        `yaml:"post_execution_impact_window"`
 		BaselineDur    time.Duration `yaml:"-"`
 		ImpactDur             time.Duration `yaml:"-"`
-		OrphanCorrelationWindow string        `yaml:"orphan_correlation_window"`
-		OrphanCorrelationDur  time.Duration `yaml:"-"`
+		IntentExecutionCorrelationWindow string        `yaml:"intent_execution_correlation_window"`
+		IntentExecutionCorrelationDur  time.Duration `yaml:"-"`
 	} `yaml:"analysis"`
 }
 
@@ -47,7 +47,7 @@ func Load(configPath string) (*Config, error) {
 	}
 	cfg.Analysis.BaselineWindow = "30m"
 	cfg.Analysis.ImpactWindow = "30m"
-	cfg.Analysis.OrphanCorrelationWindow = "1h"
+	cfg.Analysis.IntentExecutionCorrelationWindow = "1h"
 
 	// Load from YAML if exists, potentially overriding defaults
 	if configPath != "" {
@@ -74,9 +74,9 @@ func Load(configPath string) (*Config, error) {
 		cfg.Analysis.ImpactDur = 30 * time.Minute
 	}
 
-	cfg.Analysis.OrphanCorrelationDur, err = time.ParseDuration(cfg.Analysis.OrphanCorrelationWindow)
+	cfg.Analysis.IntentExecutionCorrelationDur, err = time.ParseDuration(cfg.Analysis.IntentExecutionCorrelationWindow)
 	if err != nil {
-		cfg.Analysis.OrphanCorrelationDur = 1 * time.Hour
+		cfg.Analysis.IntentExecutionCorrelationDur = 1 * time.Hour
 	}
 
 	return cfg, nil
