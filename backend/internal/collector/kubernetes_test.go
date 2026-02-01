@@ -2,6 +2,7 @@ package collector_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 	"valiant/internal/collector"
@@ -59,12 +60,8 @@ func TestKubernetesCollector_AuditorLogic(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 
-	// In a test, we can call the internal method directly if we make it public or 
-	// just run Start and wait for events.
-	// Since I made Start public, I'll run it in a goroutine.
 	go coll.Start(ctx, eventChan)
 
-	// Wait for one event (intentional-app)
 	select {
 	case event := <-eventChan:
 		if event.AffectedServices[0] != "intentional-app" {
@@ -74,15 +71,121 @@ func TestKubernetesCollector_AuditorLogic(t *testing.T) {
 		t.Error("timeout waiting for event")
 	}
 
-	// Verify no more events (manual-app should be ignored)
 	select {
 	case event := <-eventChan:
 		t.Errorf("unexpected second event: %s", event.Summary)
 	default:
-		// Success: no more events
 	}
 }
 
-// More advanced K8s tests would require mocking the clientset entirely
-// which NewKubernetesCollector doesn't currently support (it creates its own).
-// Refactoring NewKubernetesCollector to accept a clientset interface would improve testability.
+func newTestDeployment(name string, generation int64, sha string, available bool) *appsv1.Deployment {
+	annotations := map[string]string{
+		"valiant.io/source": "argocd",
+	}
+	if sha != "" {
+		annotations["valiant.io/git-sha"] = sha
+	}
+
+	conditions := []appsv1.DeploymentCondition{}
+	if available {
+		conditions = append(conditions, appsv1.DeploymentCondition{
+			Type:           "Available",
+			Status:         "True",
+			LastUpdateTime: metav1.Now(),
+		})
+		conditions = append(conditions, appsv1.DeploymentCondition{
+			Type:   "Progressing",
+			Reason: "NewReplicaSetAvailable",
+		})
+	}
+
+	return &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        name,
+			Namespace:   "default",
+			Annotations: annotations,
+			Generation:  generation,
+			UID:         "test-uid",
+		},
+		Status: appsv1.DeploymentStatus{
+			Conditions: conditions,
+		},
+	}
+}
+
+func TestKubernetesCollector_FingerprintDeduplication(t *testing.T) {
+	cfg := config.Config{}
+	cfg.Kubernetes.RequireAnnotation = true
+	cfg.Kubernetes.AllowedSources = []string{"argocd"}
+
+	client := fake.NewSimpleClientset()
+	coll, err := collector.NewKubernetesCollector(cfg, client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	eventChan := make(chan domain.ChangeEvent, 10)
+	ctx := context.Background()
+
+	expectEvent := func(shouldExist bool, expectedGen int64, step string) {
+		t.Helper()
+		select {
+		case event := <-eventChan:
+			if !shouldExist {
+				t.Fatalf("[%s] unexpected event for generation %s", step, event.Metadata["generation"])
+			}
+			genStr := event.Metadata["generation"]
+			if genStr != fmt.Sprintf("%d", expectedGen) {
+				t.Errorf("[%s] expected event for generation %d, got %s", step, expectedGen, genStr)
+			}
+		case <-time.After(100 * time.Millisecond):
+			if shouldExist {
+				t.Fatalf("[%s] timeout waiting for event for generation %d", step, expectedGen)
+			}
+		}
+	}
+
+	// 2. Initial deploy (gen 1, sha A) -> SHOULD collect
+	dep := newTestDeployment("app-a", 1, "sha-a", true)
+	if _, err := client.AppsV1().Deployments("default").Create(ctx, dep, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	coll.CollectAndSend(ctx, eventChan)
+	expectEvent(true, 1, "Initial Deploy")
+
+	// 3. Metadata change (gen 2, sha A) -> SHOULD IGNORE
+	dep.Generation = 2
+	dep.ResourceVersion = "2" 
+	if _, err := client.AppsV1().Deployments("default").Update(ctx, dep, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	coll.CollectAndSend(ctx, eventChan)
+	expectEvent(false, 2, "Metadata Change")
+
+	// 4. New code (gen 3, sha B) -> SHOULD collect
+	dep.Generation = 3
+	dep.ResourceVersion = "3"
+	dep.Annotations["valiant.io/git-sha"] = "sha-b"
+	if _, err := client.AppsV1().Deployments("default").Update(ctx, dep, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	coll.CollectAndSend(ctx, eventChan)
+	expectEvent(true, 3, "New Code")
+
+	// 5. Rollback (gen 4, sha A) -> SHOULD collect
+	dep.Generation = 4
+	dep.ResourceVersion = "4"
+	dep.Annotations["valiant.io/git-sha"] = "sha-a"
+	if _, err := client.AppsV1().Deployments("default").Update(ctx, dep, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	coll.CollectAndSend(ctx, eventChan)
+	expectEvent(true, 4, "Rollback")
+
+	// 6. No change (gen 4, sha A) -> SHOULD IGNORE (by generation check)
+	dep.ResourceVersion = "5"
+	if _, err := client.AppsV1().Deployments("default").Update(ctx, dep, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	coll.CollectAndSend(ctx, eventChan)
+	expectEvent(false, 4, "No Change")
+}
