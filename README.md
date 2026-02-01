@@ -130,7 +130,7 @@ Here's a step-by-step overview of how data flows through Valiant:
 The fastest way to get started is with Docker Compose.
 
 ```bash
-git clone https://github.com/valiant-project/valiant.git
+git clone https://github.com/BytePeaks/valiant.git
 cd valiant
 cp example/config.yaml ./backend/config.yaml
 docker-compose up --build -d
@@ -327,7 +327,7 @@ Valiant's backend API returns standard HTTP status codes along with a JSON error
 
 ## Contributing
 
-We welcome contributions from the community! Please refer to our `CONTRIBUTING.md` (once created) for detailed guidelines on setting up your development environment, coding style, testing, and the process for submitting pull requests. We highly value small, focused, and logical pull requests that address a single issue or feature.
+We welcome contributions from the community! Please refer to our [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines on setting up your development environment, coding style, testing, and the process for submitting pull requests. We highly value small, focused, and logical pull requests that address a single issue or feature.
 
 ---
 
