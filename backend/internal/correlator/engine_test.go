@@ -304,157 +304,102 @@ func TestAnalyzeImpact_InstantRollout(t *testing.T) {
 	}
 }
 
-func TestAnalyzeImpact_OrphanEvent(t *testing.T) {
+func TestAnalyzeImpact_IntentExecutionLinking(t *testing.T) {
 	cfg := &config.Config{}
-	cfg.Analysis.OrphanCorrelationDur = 1 * time.Hour
-	// Metrics will be called for baseline/impact, so provide dummy values
-	metrics := &ControllableMetrics{
-		Calls: []domain.MetricValues{{}, {}},
-	}
-	eventTime := time.Now().Add(-2 * time.Hour) // Far enough in past
+	cfg.Analysis.IntentExecutionCorrelationDur = 1 * time.Hour
+	metrics := &ControllableMetrics{Calls: []domain.MetricValues{{}, {}}}
+	eventTime := time.Now().Add(-2 * time.Hour)
 
-	// --- SCENARIO 1: Is Orphaned ---
-	t.Run("IsOrphaned", func(t *testing.T) {
+	t.Run("Linked GitOps event", func(t *testing.T) {
 		store := &MockStorage{
-			changeEvents: []domain.ChangeEvent{}, // No corresponding CI event
-		}
-		engine := correlator.NewEngine(store, metrics, cfg)
-		event := domain.ChangeEvent{
-			ID:               "evt-orphan",
-			Timestamp:        eventTime,
-			TriggerType:      "GitOps",
-			AffectedServices: []string{"service-a"},
-		}
-
-		analysis, err := engine.AnalyzeImpact(context.Background(), event)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		if !analysis.IsOrphaned {
-			t.Error("expected IsOrphaned to be true, but it was false")
-		}
-	})
-
-	// --- SCENARIO 2: Not Orphaned ---
-	t.Run("NotOrphaned", func(t *testing.T) {
-		store := &MockStorage{
-			changeEvents: []domain.ChangeEvent{ // Found a matching CI event
-				{ID: "evt-ci-match", TriggerType: "CI"},
+			changeEvents: []domain.ChangeEvent{
+				{ID: "ci-evt-1", TriggerType: "CI", Metadata: map[string]string{"git_commit_sha": "abcdef123"}},
 			},
 		}
 		engine := correlator.NewEngine(store, metrics, cfg)
 		event := domain.ChangeEvent{
-			ID:               "evt-not-orphan",
-			Timestamp:        eventTime,
-			TriggerType:      "GitOps",
-			AffectedServices: []string{"service-a"},
+			ID:          "exec-evt-1",
+			TriggerType: "GitOps",
+			Timestamp:   eventTime,
+			Metadata:    map[string]string{"git_commit_sha": "abcdef123"},
 		}
-
 		analysis, err := engine.AnalyzeImpact(context.Background(), event)
 		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
+			t.Fatalf("Unexpected error: %v", err)
 		}
-
 		if analysis.IsOrphaned {
-			t.Error("expected IsOrphaned to be false, but it was true")
+			t.Error("Expected IsOrphaned to be false, but it was true")
 		}
 	})
 
-	// --- SCENARIO 3: Non-execution events are never orphaned ---
-	t.Run("NeverOrphanedForCI", func(t *testing.T) {
-		store := &MockStorage{
-			changeEvents: []domain.ChangeEvent{}, // No other events exist
-		}
+	t.Run("Orphaned GitOps event (no match)", func(t *testing.T) {
+		store := &MockStorage{changeEvents: []domain.ChangeEvent{}}
 		engine := correlator.NewEngine(store, metrics, cfg)
 		event := domain.ChangeEvent{
-			ID:               "evt-ci-never-orphan",
-			Timestamp:        eventTime,
-			TriggerType:      "CI", // This is not an execution event
-			AffectedServices: []string{"service-a"},
+			ID:          "exec-evt-2",
+			TriggerType: "GitOps",
+			Timestamp:   eventTime,
+			Metadata:    map[string]string{"git_commit_sha": "abcdef123"},
 		}
-
 		analysis, err := engine.AnalyzeImpact(context.Background(), event)
 		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
+			t.Fatalf("Unexpected error: %v", err)
 		}
-
-		if analysis.IsOrphaned {
-			t.Error("expected IsOrphaned to be false for a CI event, but it was true")
-		}
-	})
-
-	// --- SCENARIO 4: Match at the edge of the window ---
-	t.Run("MatchAtWindowEdge", func(t *testing.T) {
-		store := &MockStorage{
-			// The GetChangeEvents mock in the real implementation would handle the time filtering,
-			// for this test, we simulate that it *does* return an event that is precisely on the boundary.
-			changeEvents: []domain.ChangeEvent{{ID: "evt-ci-edge", TriggerType: "CI"}},
-		}
-		engine := correlator.NewEngine(store, metrics, cfg)
-		event := domain.ChangeEvent{
-			ID:               "evt-edge-case",
-			Timestamp:        eventTime,
-			TriggerType:      "GitOps",
-			AffectedServices: []string{"service-a"},
-		}
-
-		analysis, err := engine.AnalyzeImpact(context.Background(), event)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		if analysis.IsOrphaned {
-			t.Error("expected IsOrphaned to be false when match is at window edge, but it was true")
-		}
-	})
-
-	// --- SCENARIO 5: No match just outside the window ---
-	t.Run("NoMatchOutsideWindow", func(t *testing.T) {
-		store := &MockStorage{
-			// Simulate that the storage query found no events in the window.
-			changeEvents: []domain.ChangeEvent{},
-		}
-		engine := correlator.NewEngine(store, metrics, cfg)
-		event := domain.ChangeEvent{
-			ID:               "evt-outside-window",
-			Timestamp:        eventTime,
-			TriggerType:      "GitOps",
-			AffectedServices: []string{"service-a"},
-		}
-
-		analysis, err := engine.AnalyzeImpact(context.Background(), event)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
 		if !analysis.IsOrphaned {
-			t.Error("expected IsOrphaned to be true when match is outside window, but it was false")
+			t.Error("Expected IsOrphaned to be true, but it was false")
 		}
 	})
 
-	// --- SCENARIO 6: Orphaned when services do not overlap ---
-	t.Run("OrphanedWithMismatchedServices", func(t *testing.T) {
-		store := &MockStorage{
-			// Storage returns a CI event, but the correlator's filter *should* have excluded it.
-			// We simulate this by having the mock return an empty list.
-			changeEvents: []domain.ChangeEvent{},
-		}
+	t.Run("Orphaned GitOps event (no metadata)", func(t *testing.T) {
+		store := &MockStorage{}
 		engine := correlator.NewEngine(store, metrics, cfg)
 		event := domain.ChangeEvent{
-			ID:               "evt-mismatched-svc",
-			Timestamp:        eventTime,
-			TriggerType:      "GitOps",
-			AffectedServices: []string{"service-a"},
+			ID:          "exec-evt-3",
+			TriggerType: "GitOps",
+			Timestamp:   eventTime,
+			Metadata:    map[string]string{},
 		}
-
 		analysis, err := engine.AnalyzeImpact(context.Background(), event)
 		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
+			t.Fatalf("Unexpected error: %v", err)
 		}
-
 		if !analysis.IsOrphaned {
-			t.Error("expected IsOrphaned to be true when services do not match, but it was false")
+			t.Error("Expected IsOrphaned to be true for event with no linking metadata, but it was false")
+		}
+	})
+
+	t.Run("Orphaned manual event", func(t *testing.T) {
+		store := &MockStorage{}
+		engine := correlator.NewEngine(store, metrics, cfg)
+		event := domain.ChangeEvent{
+			ID:          "manual-evt-1",
+			TriggerType: "manual",
+			Timestamp:   eventTime,
+		}
+		analysis, err := engine.AnalyzeImpact(context.Background(), event)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		if !analysis.IsOrphaned {
+			t.Error("Expected IsOrphaned to be true for manual event, but it was false")
+		}
+	})
+
+	t.Run("CI event is never orphaned", func(t *testing.T) {
+		store := &MockStorage{}
+		engine := correlator.NewEngine(store, metrics, cfg)
+		event := domain.ChangeEvent{
+			ID:          "ci-evt-only",
+			TriggerType: "CI",
+			Timestamp:   eventTime,
+		}
+		analysis, err := engine.AnalyzeImpact(context.Background(), event)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		if analysis.IsOrphaned {
+			t.Error("Expected IsOrphaned to be false for a CI event, but it was true")
 		}
 	})
 }
+
