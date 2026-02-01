@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Initialized Valiant project structure.
 - **Backend (Go):**
+  - Implemented **Orphan Event Detection**: Execution events (e.g., GitOps, manual) without a corresponding intent event (e.g., CI) within a configurable correlation window are now marked as `IsOrphaned`.
+  - Extended `PostgresStorage.GetChangeEvents` to support filtering by trigger type, time range, and affected services.
+  - Added `IsOrphaned` field to `domain.ImpactAnalysis` for API response.
+  - Added `OrphanCorrelationWindow` configuration to `config.yaml`.
   - Project initialization with Go modules.
   - Core domain models for `ChangeEvent`, `MetricValues`, and `ImpactAnalysis`.
   - Defined interfaces for `Storage`, `MetricsProvider`, and `Collector`.

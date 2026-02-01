@@ -54,7 +54,31 @@ func (e *Engine) AnalyzeImpact(ctx context.Context, event domain.ChangeEvent) (d
 		return *existing, nil
 	}
 
-	// 2. Define time windows relative to the change event using Config
+	analysis := domain.ImpactAnalysis{
+		ChangeEvent: event,
+	}
+
+	// 2. Orphan detection
+	isExecutionEvent := event.TriggerType == "GitOps" || event.TriggerType == "manual"
+	if isExecutionEvent {
+		// Look for a corresponding CI event in the correlation window
+		from := event.Timestamp.Add(-e.config.Analysis.OrphanCorrelationDur)
+		to := event.Timestamp
+		ciEvents, err := e.storage.GetChangeEvents(ctx, map[string]interface{}{
+			"trigger_type":    "CI",
+			"from_timestamp":  from,
+			"to_timestamp":    to,
+			"services_any_of": event.AffectedServices,
+		})
+		if err != nil {
+			return domain.ImpactAnalysis{}, fmt.Errorf("failed to check for orphan event: %w", err)
+		}
+		if len(ciEvents) == 0 {
+			analysis.IsOrphaned = true
+		}
+	}
+
+	// 3. Define time windows relative to the change event using Config
 	baselineDur := e.config.Analysis.BaselineDur
 	impactDur := e.config.Analysis.ImpactDur
 
@@ -103,15 +127,12 @@ func (e *Engine) AnalyzeImpact(ctx context.Context, event domain.ChangeEvent) (d
 	// 7. Calculate confidence score based on data volume.
 	confidenceScore := calculateConfidenceScore(baselineMetrics, impactMetrics)
 
-	analysis := domain.ImpactAnalysis{
-		ChangeEvent:     event,
-		BaselineMetrics: baselineMetrics,
-		ImpactMetrics:   impactMetrics,
-		Deltas:          deltas,
-		ImpactScore:     impactScore,
-		ImpactLevel:     impactLevel,
-		ConfidenceScore: confidenceScore,
-	}
+	analysis.BaselineMetrics = baselineMetrics
+	analysis.ImpactMetrics = impactMetrics
+	analysis.Deltas = deltas
+	analysis.ImpactScore = impactScore
+	analysis.ImpactLevel = impactLevel
+	analysis.ConfidenceScore = confidenceScore
 
 	// 7. Save snapshot
 	if err := e.storage.SaveImpactAnalysis(ctx, analysis); err != nil {

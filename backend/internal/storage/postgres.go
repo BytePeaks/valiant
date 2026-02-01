@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"valiant/internal/domain"
 
 	"github.com/lib/pq"
@@ -77,11 +78,42 @@ func (s *PostgresStorage) GetChangeEvents(ctx context.Context, filters map[strin
 	query := `
 		SELECT id, source, trigger_type, execution_id, change_type, timestamp, end_time, affected_services, metadata, summary
 		FROM change_events
+	`
+	var args []interface{}
+	var whereClauses []string
+	argCount := 1
+
+	if triggerType, ok := filters["trigger_type"]; ok {
+		whereClauses = append(whereClauses, fmt.Sprintf("trigger_type = $%d", argCount))
+		args = append(args, triggerType)
+		argCount++
+	}
+	if from, ok := filters["from_timestamp"]; ok {
+		whereClauses = append(whereClauses, fmt.Sprintf("timestamp >= $%d", argCount))
+		args = append(args, from)
+		argCount++
+	}
+	if to, ok := filters["to_timestamp"]; ok {
+		whereClauses = append(whereClauses, fmt.Sprintf("timestamp <= $%d", argCount))
+		args = append(args, to)
+		argCount++
+	}
+	if services, ok := filters["services_any_of"].([]string); ok && len(services) > 0 {
+		whereClauses = append(whereClauses, fmt.Sprintf("affected_services && $%d", argCount))
+		args = append(args, pq.Array(services))
+		argCount++
+	}
+
+	if len(whereClauses) > 0 {
+		query += " WHERE " + strings.Join(whereClauses, " AND ")
+	}
+
+	query += `
 		ORDER BY timestamp DESC
 		LIMIT 100
 	`
 
-	rows, err := s.db.QueryContext(ctx, query)
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query change events: %w", err)
 	}

@@ -58,3 +58,7 @@ analysis:
   # Duration to look forward AFTER the execution finished to measure stability impact.
   # This captures post-deploy issues like memory leaks, cache warmup, or slow crashes.
   post_execution_impact_window: "30m"
+
+  # Duration to look back from an execution event to find a corresponding intent (CI) event.
+  # If no intent event is found within this window, the execution event is marked as orphaned.
+  orphan_correlation_window: "1h"

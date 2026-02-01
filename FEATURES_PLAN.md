@@ -10,8 +10,8 @@ This document outlines the planned technical evolutions for Valiant, focusing on
 - [ ] **Heuristic Linking:** Implement backend logic to link a `trigger_type: CI` event (Intent) with a `trigger_type: GitOps` event (Execution) if they share the same `git_sha` or `image_tag` within a specific time window.
 - [ ] **The Story Timeline:** Update the Frontend to display these linked events as a single "Deployment Unit." 
     - *Visual:* "PR Merged (Intent) -> Image Built -> K8s Rollout (Execution) -> Analysis."
-- [ ] **Orphan Detection:** Highlight executions that have no matching intent (e.g., a deployment that happened without a corresponding CI build signal).
-- [ ] **Execution Fingerprinting:** Refine the Kubernetes Collector to ignore rollouts where the `generation` increased but the `valiant.io/git-sha` (or similar fingerprint) remained identical, effectively filtering out manual `kubectl edit` actions.
+- [x] **Orphan Detection:** Highlight executions that have no matching intent (e.g., a deployment that happened without a corresponding CI build signal).
+- [x] **Execution Fingerprinting:** Refine the Kubernetes Collector to ignore rollouts where the `generation` increased but the `valiant.io/git-sha` (or similar fingerprint) remained identical, effectively filtering out manual `kubectl edit` actions.
 
 ## II. Customizable Prometheus Queries (YAML Templates)
 **Goal:** Allow Valiant to adapt to any environment (Istio, Nginx, Custom Exporters) without code changes.

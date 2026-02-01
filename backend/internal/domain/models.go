@@ -28,6 +28,7 @@ type MetricValues struct {
 // ImpactAnalysis represents the full analysis of a single change event.
 type ImpactAnalysis struct {
 	ChangeEvent      ChangeEvent  `json:"change_event"`
+	IsOrphaned       bool         `json:"is_orphaned,omitempty"` // True if no corresponding intent event was found
 	BaselineMetrics  MetricValues `json:"baseline_metrics"`
 	ImpactMetrics    MetricValues `json:"impact_metrics"`
 	Deltas           MetricValues `json:"deltas"`           // Percentage change for each metric
