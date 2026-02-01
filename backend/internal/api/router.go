@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+
 	"valiant/internal/correlator"
 	"valiant/internal/domain"
 	"valiant/internal/storage"
@@ -22,16 +23,30 @@ func NewRouter(s storage.Storage, c *correlator.Engine) *Router {
 
 func (router *Router) Handler() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("OK"))
-	})
 
+	// Health check endpoint
+	mux.HandleFunc("/health", router.handleHealth)
+
+	// API routes
 	mux.HandleFunc("/api/v1/events", router.handleEvents)
 	mux.HandleFunc("/api/v1/services", router.handleServices)
 	mux.HandleFunc("/api/v1/analyze", router.handleAnalysis)
 
 	return corsMiddleware(mux)
+}
+
+func (router *Router) handleHealth(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+
+	_ = json.NewEncoder(w).Encode(map[string]string{
+		"status": "ok",
+	})
 }
 
 func (router *Router) handleServices(w http.ResponseWriter, r *http.Request) {
@@ -46,22 +61,8 @@ func (router *Router) handleServices(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	json.NewEncoder(w).Encode(services)
-}
-
-func corsMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS, PUT, DELETE")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
-
-		if r.Method == http.MethodOptions {
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-
-		next.ServeHTTP(w, r)
-	})
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(services)
 }
 
 func (router *Router) handleEvents(w http.ResponseWriter, r *http.Request) {
@@ -87,7 +88,9 @@ func (router *Router) handleEvents(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Failed to fetch events", http.StatusInternalServerError)
 			return
 		}
-		json.NewEncoder(w).Encode(events)
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(events)
 		return
 	}
 
@@ -103,6 +106,7 @@ func (router *Router) handleAnalysis(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		EventID string `json:"event_id"`
 	}
+
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -116,8 +120,8 @@ func (router *Router) handleAnalysis(w http.ResponseWriter, r *http.Request) {
 
 	analysis, err := router.correlator.AnalyzeImpact(r.Context(), event)
 	if err == correlator.ErrImpactWindowNotClosed {
-		w.WriteHeader(http.StatusUnprocessableEntity) // 422 indicates semantic issue (too early)
-		json.NewEncoder(w).Encode(analysis)
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		_ = json.NewEncoder(w).Encode(analysis)
 		return
 	}
 	if err != nil {
@@ -125,5 +129,21 @@ func (router *Router) handleAnalysis(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	json.NewEncoder(w).Encode(analysis)
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(analysis)
+}
+
+func corsMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS, PUT, DELETE")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
 }
