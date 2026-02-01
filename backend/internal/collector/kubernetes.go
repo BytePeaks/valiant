@@ -15,12 +15,13 @@ import (
 )
 
 type KubernetesCollector struct {
-	clientset      kubernetes.Interface
-	kubeConfigPath string
-	namespaces     []string
-	requireAnnot   bool
-	allowedSources []string
-	lastProcessed  map[string]int64 // map["ns/name"]generation
+	clientset        kubernetes.Interface
+	kubeConfigPath   string
+	namespaces       []string
+	requireAnnot     bool
+	allowedSources   []string
+	lastProcessed    map[string]int64    // map["ns/name"]generation
+	lastProcessedSha map[string]string // map["ns/name"]fingerprint
 }
 
 func NewKubernetesCollector(cfg config.Config, clientset kubernetes.Interface) (*KubernetesCollector, error) {
@@ -45,12 +46,13 @@ func NewKubernetesCollector(cfg config.Config, clientset kubernetes.Interface) (
 	}
 
 	return &KubernetesCollector{
-		clientset:      clientset,
-		kubeConfigPath: cfg.Kubernetes.KubeConfigPath,
-		namespaces:     cfg.Kubernetes.Namespaces,
-		requireAnnot:   cfg.Kubernetes.RequireAnnotation,
-		allowedSources: cfg.Kubernetes.AllowedSources,
-		lastProcessed:  make(map[string]int64),
+		clientset:        clientset,
+		kubeConfigPath:   cfg.Kubernetes.KubeConfigPath,
+		namespaces:       cfg.Kubernetes.Namespaces,
+		requireAnnot:     cfg.Kubernetes.RequireAnnotation,
+		allowedSources:   cfg.Kubernetes.AllowedSources,
+		lastProcessed:    make(map[string]int64),
+		lastProcessedSha: make(map[string]string),
 	}, nil
 }
 
@@ -59,19 +61,19 @@ func (c *KubernetesCollector) Start(ctx context.Context, eventChan chan<- domain
 	defer ticker.Stop()
 
 	// Initial run
-	c.collectAndSend(ctx, eventChan)
+	c.CollectAndSend(ctx, eventChan)
 
 	for {
 		select {
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
-			c.collectAndSend(ctx, eventChan)
+			c.CollectAndSend(ctx, eventChan)
 		}
 	}
 }
 
-func (c *KubernetesCollector) collectAndSend(ctx context.Context, eventChan chan<- domain.ChangeEvent) {
+func (c *KubernetesCollector) CollectAndSend(ctx context.Context, eventChan chan<- domain.ChangeEvent) {
 	allDeps, err := c.clientset.AppsV1().Deployments("").List(ctx, metav1.ListOptions{})
 	if err != nil {
 		fmt.Printf("Error listing deployments: %v\n", err)
@@ -95,9 +97,22 @@ func (c *KubernetesCollector) collectAndSend(ctx context.Context, eventChan chan
 			continue
 		}
 
-		// Deduplicate
+		// Deduplicate based on generation
 		if gen, ok := c.lastProcessed[key]; ok && gen >= d.Generation {
 			continue
+		}
+
+		// Deduplicate based on fingerprint
+		gitSha := d.Annotations["valiant.io/git-sha"]
+		if gitSha == "" {
+			gitSha = d.Annotations["kubernetes.io/change-cause"]
+		}
+		if gitSha != "" {
+			if lastSha, ok := c.lastProcessedSha[key]; ok && lastSha == gitSha {
+				fmt.Printf("Ignored rollout: deployment %s generation changed but fingerprint %s is the same\n", key, gitSha)
+				c.lastProcessed[key] = d.Generation // Update generation to prevent re-evaluating
+				continue
+			}
 		}
 
 		// 1. Intent Validation
@@ -120,15 +135,15 @@ func (c *KubernetesCollector) collectAndSend(ctx context.Context, eventChan chan
 			}
 		}
 
-		if availableCond == nil || availableCond.Status != "True" || 
-		   progressingCond == nil || progressingCond.Reason != "NewReplicaSetAvailable" {
+		if availableCond == nil || availableCond.Status != "True" ||
+			progressingCond == nil || progressingCond.Reason != "NewReplicaSetAvailable" {
 			continue
 		}
 
 		// 3. Timing & Metadata
 		if time.Since(availableCond.LastUpdateTime.Time) < 35*time.Second {
 			rolloutStartTime := d.CreationTimestamp.Time
-			
+
 			var rsSelector string
 			if d.Spec.Selector != nil {
 				rsSelector = metav1.FormatLabelSelector(d.Spec.Selector)
@@ -151,25 +166,20 @@ func (c *KubernetesCollector) collectAndSend(ctx context.Context, eventChan chan
 			}
 
 			rolloutEndTime := availableCond.LastUpdateTime.Time
-			gitSha := d.Annotations["valiant.io/git-sha"]
-			if gitSha == "" {
-				gitSha = d.Annotations["kubernetes.io/change-cause"]
-			}
-
 			image := ""
 			if len(d.Spec.Template.Spec.Containers) > 0 {
 				image = d.Spec.Template.Spec.Containers[0].Image
 			}
 
 			eventChan <- domain.ChangeEvent{
-				ID:          fmt.Sprintf("k8s-%s-%s-%d", d.Namespace, d.Name, d.Generation),
-				TriggerType: "GitOps",
-				ExecutionID: fmt.Sprintf("%s-%d", d.UID, d.Generation),
-				ChangeType:  "deployment_rollout",
-				Timestamp:   rolloutStartTime,
-				EndTime:     &rolloutEndTime,
+				ID:               fmt.Sprintf("k8s-%s-%s-%d", d.Namespace, d.Name, d.Generation),
+				TriggerType:      "GitOps",
+				ExecutionID:      fmt.Sprintf("%s-%d", d.UID, d.Generation),
+				ChangeType:       "deployment_rollout",
+				Timestamp:        rolloutStartTime,
+				EndTime:          &rolloutEndTime,
 				AffectedServices: []string{d.Name},
-				Summary:     fmt.Sprintf("Deployment %s rollout completed via %s", d.Name, source),
+				Summary:          fmt.Sprintf("Deployment %s rollout completed via %s", d.Name, source),
 				Metadata: map[string]string{
 					"namespace":     d.Namespace,
 					"kind":          "Deployment",
@@ -182,6 +192,9 @@ func (c *KubernetesCollector) collectAndSend(ctx context.Context, eventChan chan
 				},
 			}
 			c.lastProcessed[key] = d.Generation
+			if gitSha != "" {
+				c.lastProcessedSha[key] = gitSha
+			}
 		}
 	}
 }
