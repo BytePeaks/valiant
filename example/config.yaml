@@ -61,4 +61,4 @@ analysis:
 
   # Duration to look back from an execution event to find a corresponding intent (CI) event.
   # If no intent event is found within this window, the execution event is marked as orphaned.
-  orphan_correlation_window: "1h"
+  intent_execution_correlation_window: "1h"
