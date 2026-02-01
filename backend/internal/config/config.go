@@ -25,7 +25,9 @@ type Config struct {
 		BaselineWindow string        `yaml:"baseline_window"` // e.g., "30m"
 		ImpactWindow   string        `yaml:"post_execution_impact_window"`
 		BaselineDur    time.Duration `yaml:"-"`
-		ImpactDur      time.Duration `yaml:"-"`
+		ImpactDur             time.Duration `yaml:"-"`
+		OrphanCorrelationWindow string        `yaml:"orphan_correlation_window"`
+		OrphanCorrelationDur  time.Duration `yaml:"-"`
 	} `yaml:"analysis"`
 }
 
@@ -45,8 +47,9 @@ func Load(configPath string) (*Config, error) {
 	}
 	cfg.Analysis.BaselineWindow = "30m"
 	cfg.Analysis.ImpactWindow = "30m"
+	cfg.Analysis.OrphanCorrelationWindow = "1h"
 
-	// Load from YAML if exists
+	// Load from YAML if exists, potentially overriding defaults
 	if configPath != "" {
 		if _, err := os.Stat(configPath); err == nil {
 			data, err := os.ReadFile(configPath)
@@ -69,6 +72,11 @@ func Load(configPath string) (*Config, error) {
 	cfg.Analysis.ImpactDur, err = time.ParseDuration(cfg.Analysis.ImpactWindow)
 	if err != nil {
 		cfg.Analysis.ImpactDur = 30 * time.Minute
+	}
+
+	cfg.Analysis.OrphanCorrelationDur, err = time.ParseDuration(cfg.Analysis.OrphanCorrelationWindow)
+	if err != nil {
+		cfg.Analysis.OrphanCorrelationDur = 1 * time.Hour
 	}
 
 	return cfg, nil
