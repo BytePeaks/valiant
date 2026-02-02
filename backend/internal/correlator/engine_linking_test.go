@@ -73,6 +73,10 @@ func (m *LinkingMockStorage) SaveServicePreferences(ctx context.Context, service
 	return nil
 }
 
+func (m *LinkingMockStorage) GetNamespaces(ctx context.Context) ([]string, error) {
+	return []string{}, nil
+}
+
 
 func TestIntentExecutionLinking(t *testing.T) {
 	cfg := &config.Config{}

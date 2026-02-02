@@ -16,7 +16,7 @@ prometheus:
   url: "http://prometheus:9090"
 
   # Custom PromQL Query Templates
-  # You can override the default queries here to match your specific exporters or labels.
+  # You can extend the default queries here to match your specific exporters or labels.
   # Available variables:
   #   {{ .Services }} - Regex-friendly list of services (e.g., "svc-a|svc-b")
   #   {{ .Duration }} - The analysis window duration (e.g., "30m")
@@ -33,10 +33,17 @@ prometheus:
   # Define a list of custom PromQL queries. These will be collected for every analysis.
   # Users can then choose which metrics (core and additional) to view in the UI.
   additional_metrics:
+      # Metrics name displayed on frontend
     - name: "orders_per_minute"
-      query: `sum(rate(app_orders_total{service=~"{{ .Services }}"}[1m])) * 60`
+      # It is necessary to replace query in multiline value in order not to break YAML parsing!
+      query: |
+        sum(rate(app_orders_total{service=~"{{ .Services }}"}[1m])) * 60
+      # Example Lucide icon
+      icon: "ShoppingCart"
     - name: "payment_failure_rate"
-      query: `sum(rate(app_payment_failures_total{service=~"{{ .Services }}"}[1m])) / sum(rate(app_payments_total{service=~"{{ .Services }}"}[1m]))`
+      query: |
+        sum(rate(app_payment_failures_total{service=~"{{ .Services }}"}[1m])) / sum(rate(app_payments_total{service=~"{{ .Services }}"}[1m]))
+      icon: "CreditCard"
 
 # Kubernetes Collector Configuration
 # ----------------------------------

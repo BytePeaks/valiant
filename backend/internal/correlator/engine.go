@@ -157,11 +157,11 @@ func (e *Engine) AnalyzeImpact(ctx context.Context, event domain.ChangeEvent) (d
 
 func calculateDeltas(baseline, impact domain.MetricValues) domain.MetricValues {
 	deltas := domain.MetricValues{
-		ErrorRate:        calculateDelta(baseline.ErrorRate, impact.ErrorRate),
-		LatencyP95:       calculateDelta(baseline.LatencyP95, impact.LatencyP95),
-		RPS:              calculateDelta(baseline.RPS, impact.RPS),
-		CPUSaturation:    calculateDelta(baseline.CPUSaturation, impact.CPUSaturation),
-		MemorySaturation: calculateDelta(baseline.MemorySaturation, impact.MemorySaturation),
+		ErrorRate:  calculateDelta(baseline.ErrorRate, impact.ErrorRate),
+		LatencyP95: calculateDelta(baseline.LatencyP95, impact.LatencyP95),
+		RPS:        calculateDelta(baseline.RPS, impact.RPS),
+		CPU:        calculateDelta(baseline.CPU, impact.CPU),
+		Memory:     calculateDelta(baseline.Memory, impact.Memory),
 		AdditionalMetrics: make(map[string]float64), // Initialize the map
 	}
 
@@ -201,8 +201,8 @@ func calculateImpactScore(deltas domain.MetricValues) float64 {
 
 	normError := math.Max(0, math.Min(deltas.ErrorRate/2.0, 1.0))
 	normLatency := math.Max(0, math.Min(deltas.LatencyP95/2.0, 1.0))
-	normCPU := math.Max(0, math.Min(deltas.CPUSaturation/2.0, 1.0))
-	normMem := math.Max(0, math.Min(deltas.MemorySaturation/2.0, 1.0))
+	normCPU := math.Max(0, math.Min(deltas.CPU/2.0, 1.0))
+	normMem := math.Max(0, math.Min(deltas.Memory/2.0, 1.0))
 
 	// RPS: We care about drops. A drop of 100% (-1.0) should be score 1.0.
 	// Delta is (impact - baseline) / baseline.

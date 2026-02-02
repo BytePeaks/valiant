@@ -7,20 +7,23 @@ import (
 	"valiant/internal/domain"
 	"valiant/internal/metrics" // Import metrics package
 	"valiant/internal/storage"
+	"valiant/internal/config"
 	"strings"
 )
 
 type Router struct {
 	storage    storage.Storage
 	correlator *correlator.Engine
-	metrics    metrics.MetricsProvider // New field
+	metrics    metrics.MetricsProvider
+	config     *config.Config
 }
 
-func NewRouter(s storage.Storage, c *correlator.Engine, m metrics.MetricsProvider) *Router {
+func NewRouter(s storage.Storage, c *correlator.Engine, m metrics.MetricsProvider, cfg *config.Config) *Router {
 	return &Router{
 		storage:    s,
 		correlator: c,
-		metrics:    m, // Initialize new field
+		metrics:    m,
+		config:     cfg,
 	}
 }
 
@@ -36,6 +39,7 @@ func (router *Router) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/services/", router.handleServicePreferences)
 	mux.HandleFunc("/api/v1/analyze", router.handleAnalysis)
 	mux.HandleFunc("/api/v1/metrics", router.handleMetrics)
+	mux.HandleFunc("/api/v1/namespaces", router.handleNamespaces)
 
 	return corsMiddleware(mux)
 }
@@ -61,8 +65,8 @@ func (router *Router) handleMetrics(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	metricNames := router.metrics.GetAvailableMetrics()
-	json.NewEncoder(w).Encode(metricNames)
+	metricInfo := router.metrics.GetAvailableMetrics()
+	json.NewEncoder(w).Encode(metricInfo)
 }
 
 func (router *Router) handleServicePreferences(w http.ResponseWriter, r *http.Request) {
@@ -173,4 +177,37 @@ func (router *Router) handleAnalysis(w http.ResponseWriter, r *http.Request) {
 	}
 
 	json.NewEncoder(w).Encode(analysis)
+}
+
+func (router *Router) handleNamespaces(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	dbNamespaces, err := router.storage.GetNamespaces(r.Context())
+	if err != nil {
+		http.Error(w, "Failed to fetch namespaces from database", http.StatusInternalServerError)
+		return
+	}
+
+	// Merge with namespaces from config
+	configNamespaces := router.config.Kubernetes.Namespaces
+	
+	// Use a map to store unique namespaces
+	allNamespaces := make(map[string]bool)
+	for _, ns := range dbNamespaces {
+		allNamespaces[ns] = true
+	}
+	for _, ns := range configNamespaces {
+		allNamespaces[ns] = true
+	}
+
+	// Convert map keys to a slice
+	uniqueNamespaces := make([]string, 0, len(allNamespaces))
+	for ns := range allNamespaces {
+		uniqueNamespaces = append(uniqueNamespaces, ns)
+	}
+	
+	json.NewEncoder(w).Encode(uniqueNamespaces)
 }

@@ -10,6 +10,7 @@ import (
 	"time"
 	"valiant/internal/api"
 	"valiant/internal/domain"
+	"valiant/internal/config"
 )
 
 // MockStorage for API tests
@@ -47,6 +48,10 @@ func (m *MockStorage) SaveServicePreferences(ctx context.Context, serviceName st
 	return nil
 }
 
+func (m *MockStorage) GetNamespaces(ctx context.Context) ([]string, error) {
+	return []string{"production", "staging"}, nil
+}
+
 // MockMetrics for API tests
 type MockMetrics struct{}
 
@@ -54,12 +59,16 @@ func (m *MockMetrics) GetAverageMetrics(ctx context.Context, services []string, 
 	return domain.MetricValues{}, nil
 }
 
-func (m *MockMetrics) GetAvailableMetrics() []string {
-	return []string{"error_rate", "latency_p95"}
+func (m *MockMetrics) GetAvailableMetrics() []domain.MetricInfo {
+	return []domain.MetricInfo{
+		{Name: "error_rate", Icon: "AlertCircle"},
+		{Name: "latency_p95_ms", Icon: "Clock"},
+	}
 }
 
 func TestHealthCheck(t *testing.T) {
-	router := api.NewRouter(&MockStorage{}, nil, &MockMetrics{})
+	cfg := &config.Config{}
+	router := api.NewRouter(&MockStorage{}, nil, &MockMetrics{}, cfg)
 	ts := httptest.NewServer(router.Handler())
 	defer ts.Close()
 
@@ -74,7 +83,8 @@ func TestHealthCheck(t *testing.T) {
 
 func TestPostEvent(t *testing.T) {
 	store := &MockStorage{}
-	router := api.NewRouter(store, nil, &MockMetrics{})
+	cfg := &config.Config{}
+	router := api.NewRouter(store, nil, &MockMetrics{}, cfg)
 	ts := httptest.NewServer(router.Handler())
 	defer ts.Close()
 
@@ -96,7 +106,8 @@ func TestPostEvent(t *testing.T) {
 }
 
 func TestGetMetrics(t *testing.T) {
-	router := api.NewRouter(&MockStorage{}, nil, &MockMetrics{})
+	cfg := &config.Config{}
+	router := api.NewRouter(&MockStorage{}, nil, &MockMetrics{}, cfg)
 	ts := httptest.NewServer(router.Handler())
 	defer ts.Close()
 
@@ -108,7 +119,7 @@ func TestGetMetrics(t *testing.T) {
 		t.Errorf("expected 200, got %d", res.StatusCode)
 	}
 
-	var metrics []string
+	var metrics []domain.MetricInfo
 	if err := json.NewDecoder(res.Body).Decode(&metrics); err != nil {
 		t.Fatal(err)
 	}
@@ -117,7 +128,7 @@ func TestGetMetrics(t *testing.T) {
 		t.Errorf("expected 2 metrics, got %d", len(metrics))
 	}
 
-	if metrics[0] != "error_rate" || metrics[1] != "latency_p95" {
+	if metrics[0].Name != "error_rate" || metrics[1].Name != "latency_p95_ms" {
 		t.Errorf("unexpected metrics: %v", metrics)
 	}
 }

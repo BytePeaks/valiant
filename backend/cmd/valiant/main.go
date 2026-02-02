@@ -62,7 +62,7 @@ func main() {
 	}
 
 	engine := correlator.NewEngine(store, metricClient, cfg)
-	router := api.NewRouter(store, engine, metricClient)
+	router := api.NewRouter(store, engine, metricClient, cfg)
 
 	// Setup application context
 	ctx, cancel := context.WithCancel(context.Background())

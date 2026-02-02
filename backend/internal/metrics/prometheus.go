@@ -88,44 +88,61 @@ func (p *PrometheusClient) QueryMetric(ctx context.Context, metricName string, s
 	return float64(vector[0].Value), nil
 }
 
-func (p *PrometheusClient) GetAvailableMetrics() []string {
-	names := make([]string, 0, len(p.queries)+len(p.additionalMetrics))
+func (p *PrometheusClient) GetAvailableMetrics() []domain.MetricInfo {
+	metrics := make([]domain.MetricInfo, 0, len(p.queries)+len(p.additionalMetrics))
 	for name := range p.queries {
-		names = append(names, name)
-	}
-	for _, metric := range p.additionalMetrics {
-		names = append(names, metric.Name)
-	}
-	return names
-}
-
-func (p *PrometheusClient) GetAverageMetrics(ctx context.Context, services []string, start, end time.Time) (domain.MetricValues, error) {
-	duration := end.Sub(start)
-
-	var values domain.MetricValues
-	values.AdditionalMetrics = make(map[string]float64)
-
-	// Fetch core metrics
-	for metricKey := range p.queries {
-		val, err := p.QueryMetric(ctx, metricKey, services, end, duration)
-		if err != nil {
-			fmt.Printf("Error querying core metric %s: %v\n", metricKey, err)
-			continue
+		var icon string
+				switch name {
+				case "error_rate":
+					icon = "AlertCircle"
+				case "latency_p95_ms":
+					icon = "Clock"
+				case "rps":
+					icon = "Zap"
+				case "cpu":
+					icon = "Cpu"
+				case "memory":
+					icon = "Database"
+				default:
+					icon = "Activity"
+				}
+				metrics = append(metrics, domain.MetricInfo{Name: name, Icon: icon})
+			}
+			for _, metric := range p.additionalMetrics {
+				metrics = append(metrics, domain.MetricInfo{Name: metric.Name, Icon: metric.Icon})
+			}
+			return metrics
 		}
-		// This part needs to be smarter
-		switch metricKey {
-		case "error_rate":
-			values.ErrorRate = val
-		case "latency_p95":
-			values.LatencyP95 = val * 1000 // Convert to ms
-		case "rps":
-			values.RPS = val
-		case "cpu_saturation":
-			values.CPUSaturation = val
-		case "memory_saturation":
-			values.MemorySaturation = val
-		}
-	}
+		
+		
+		func (p *PrometheusClient) GetAverageMetrics(ctx context.Context, services []string, start, end time.Time) (domain.MetricValues, error) {
+			duration := end.Sub(start)
+		
+			var values domain.MetricValues
+			values.AdditionalMetrics = make(map[string]float64)
+		
+			// Fetch core metrics
+			for metricKey := range p.queries {
+				val, err := p.QueryMetric(ctx, metricKey, services, end, duration)
+				if err != nil {
+					fmt.Printf("Error querying core metric %s: %v\n", metricKey, err)
+					continue
+				}
+				// This part needs to be smarter
+				switch metricKey {
+				case "error_rate":
+					values.ErrorRate = val
+				case "latency_p95_ms":
+					values.LatencyP95 = val * 1000 // Convert to ms
+				case "rps":
+					values.RPS = val
+				case "cpu":
+					values.CPU = val
+				case "memory":
+					values.Memory = val
+				}
+			}
+		
 
 	// Fetch additional metrics
 	for _, metric := range p.additionalMetrics {

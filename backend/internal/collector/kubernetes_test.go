@@ -113,6 +113,41 @@ func newTestDeployment(name string, generation int64, sha string, available bool
 	}
 }
 
+func newTestDeploymentInNamespace(name, namespace string, generation int64, sha string, available bool) *appsv1.Deployment {
+	annotations := map[string]string{
+		"valiant.io/source": "argocd",
+	}
+	if sha != "" {
+		annotations["valiant.io/git-sha"] = sha
+	}
+
+	conditions := []appsv1.DeploymentCondition{}
+	if available {
+		conditions = append(conditions, appsv1.DeploymentCondition{
+			Type:           "Available",
+			Status:         "True",
+			LastUpdateTime: metav1.Now(),
+		})
+		conditions = append(conditions, appsv1.DeploymentCondition{
+			Type:   "Progressing",
+			Reason: "NewReplicaSetAvailable",
+		})
+	}
+
+	return &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        name,
+			Namespace:   namespace,
+			Annotations: annotations,
+			Generation:  generation,
+			UID:         "test-uid",
+		},
+		Status: appsv1.DeploymentStatus{
+			Conditions: conditions,
+		},
+	}
+}
+
 func TestKubernetesCollector_FingerprintDeduplication(t *testing.T) {
 	cfg := config.Config{}
 	cfg.Kubernetes.RequireAnnotation = true
@@ -188,4 +223,47 @@ func TestKubernetesCollector_FingerprintDeduplication(t *testing.T) {
 	}
 	coll.CollectAndSend(ctx, eventChan)
 	expectEvent(false, 4, "No Change")
+}
+
+func TestKubernetesCollector_NamespaceFilter(t *testing.T) {
+	cfg := config.Config{}
+	cfg.Kubernetes.Namespaces = []string{"watched-ns"} // Only watch this namespace
+	cfg.Kubernetes.RequireAnnotation = true
+	cfg.Kubernetes.AllowedSources = []string{"argocd"}
+
+	client := fake.NewSimpleClientset()
+	coll, err := collector.NewKubernetesCollector(cfg, client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	eventChan := make(chan domain.ChangeEvent, 10)
+	ctx := context.Background()
+
+	// Deploy in a watched namespace -> SHOULD collect
+	depWatched := newTestDeploymentInNamespace("app-watched", "watched-ns", 1, "sha-w", true)
+	if _, err := client.AppsV1().Deployments("watched-ns").Create(ctx, depWatched, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	coll.CollectAndSend(ctx, eventChan)
+	select {
+	case event := <-eventChan:
+		if event.AffectedServices[0] != "app-watched" {
+			t.Errorf("expected event for app-watched, got %s", event.AffectedServices[0])
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("timeout waiting for event from watched namespace")
+	}
+
+	// Deploy in an unwatched namespace -> SHOULD NOT collect
+	depUnwatched := newTestDeploymentInNamespace("app-unwatched", "unwatched-ns", 1, "sha-u", true)
+	if _, err := client.AppsV1().Deployments("unwatched-ns").Create(ctx, depUnwatched, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	coll.CollectAndSend(ctx, eventChan)
+	select {
+	case event := <-eventChan:
+		t.Errorf("unexpected event from unwatched namespace: %s", event.Summary)
+	case <-time.After(100 * time.Millisecond):
+		// Expected timeout, no event should be received
+	}
 }

@@ -402,3 +402,29 @@ func (s *PostgresStorage) SaveServicePreferences(ctx context.Context, serviceNam
 	}
 	return nil
 }
+
+func (s *PostgresStorage) GetNamespaces(ctx context.Context) ([]string, error) {
+	query := `
+		SELECT DISTINCT metadata ->> 'env' as namespace
+		FROM change_events
+		WHERE metadata ? 'env'
+		ORDER BY namespace ASC
+	`
+
+	rows, err := s.db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get namespaces: %w", err)
+	}
+	defer rows.Close()
+
+	var namespaces []string
+	for rows.Next() {
+		var namespace string
+		if err := rows.Scan(&namespace); err != nil {
+			return nil, err
+		}
+		namespaces = append(namespaces, namespace)
+	}
+
+	return namespaces, nil
+}

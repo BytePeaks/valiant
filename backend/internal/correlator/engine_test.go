@@ -49,6 +49,10 @@ func (m *MockStorage) SaveServicePreferences(ctx context.Context, serviceName st
 	return nil
 }
 
+func (m *MockStorage) GetNamespaces(ctx context.Context) ([]string, error) {
+	return []string{}, nil
+}
+
 // MockMetrics implements metrics.MetricsProvider
 type MockMetrics struct {
 	baseline domain.MetricValues
@@ -59,15 +63,15 @@ func (m *MockMetrics) GetAverageMetrics(ctx context.Context, services []string, 
 	return m.baseline, nil
 }
 
-func (m *MockMetrics) GetAvailableMetrics() []string {
-	return []string{}
+func (m *MockMetrics) GetAvailableMetrics() []domain.MetricInfo {
+	return []domain.MetricInfo{}
 }
 
 // Better MockMetrics that allows specifying return values for specific calls
 type ControllableMetrics struct {
-	Calls []domain.MetricValues
-	Index int
-	AvailableMetrics []string
+	Calls            []domain.MetricValues
+	Index            int
+	AvailableMetrics []domain.MetricInfo
 }
 
 func (m *ControllableMetrics) GetAverageMetrics(ctx context.Context, services []string, start, end time.Time) (domain.MetricValues, error) {
@@ -79,7 +83,7 @@ func (m *ControllableMetrics) GetAverageMetrics(ctx context.Context, services []
 	return val, nil
 }
 
-func (m *ControllableMetrics) GetAvailableMetrics() []string {
+func (m *ControllableMetrics) GetAvailableMetrics() []domain.MetricInfo {
 	return m.AvailableMetrics
 }
 
@@ -264,8 +268,8 @@ type ErrorMetrics struct {
 func (m *ErrorMetrics) GetAverageMetrics(ctx context.Context, s []string, start, end time.Time) (domain.MetricValues, error) {
 	return domain.MetricValues{}, m.err
 }
-func (m *ErrorMetrics) GetAvailableMetrics() []string {
-	return []string{}
+func (m *ErrorMetrics) GetAvailableMetrics() []domain.MetricInfo {
+	return []domain.MetricInfo{}
 }
 
 func TestAnalyzeImpact_NoServices(t *testing.T) {
@@ -317,7 +321,7 @@ func TestAnalyzeImpact_InstantRollout(t *testing.T) {
 func TestAnalyzeImpact_IntentExecutionLinking(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Analysis.IntentExecutionCorrelationDur = 1 * time.Hour
-	metrics := &ControllableMetrics{Calls: []domain.MetricValues{{}, {}}}
+	metrics := &ControllableMetrics{Calls: []domain.MetricValues{{}, {}}, AvailableMetrics: []domain.MetricInfo{}}
 	eventTime := time.Now().Add(-2 * time.Hour)
 
 	t.Run("Linked GitOps event", func(t *testing.T) {
@@ -443,7 +447,7 @@ func TestAnalyzeImpact_AdditionalMetrics(t *testing.T) {
 			// Impact call
 			{ErrorRate: 0.01, LatencyP95: 100, RPS: 100, AdditionalMetrics: impactAdditional},
 		},
-		AvailableMetrics: []string{"custom_metric_a", "custom_metric_b"},
+		AvailableMetrics: []domain.MetricInfo{{Name: "custom_metric_a"}, {Name: "custom_metric_b"}},
 	}
 
 	engine := correlator.NewEngine(store, metricsWithAdditional, cfg)
@@ -476,6 +480,6 @@ func TestAnalyzeImpact_AdditionalMetrics(t *testing.T) {
 	// Also test the GetAvailableMetrics()
 	availableMetrics := metricsWithAdditional.GetAvailableMetrics()
 	if len(availableMetrics) != 2 {
-		t.Errorf("expected 2 available metrics, got %v", availableMetrics)
+		t.Errorf("expected 2 available metrics, got %d", len(availableMetrics))
 	}
 }
