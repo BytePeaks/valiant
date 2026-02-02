@@ -7,12 +7,18 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+type PrometheusMetric struct {
+	Name  string `yaml:"name"`
+	Query string `yaml:"query"`
+}
+
 type Config struct {
 	DatabaseURL string `yaml:"database_url"`
 	Port        string `yaml:"port"`
 	Prometheus  struct {
-		URL     string            `yaml:"url"`
-		Queries map[string]string `yaml:"queries"`
+		URL              string            `yaml:"url"`
+		Queries          map[string]string `yaml:"queries"`
+		AdditionalMetrics []PrometheusMetric `yaml:"additional_metrics"`
 	} `yaml:"prometheus"`
 	Kubernetes struct {
 		Enabled           bool     `yaml:"enabled"`

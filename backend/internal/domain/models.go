@@ -23,6 +23,7 @@ type MetricValues struct {
 	RPS              float64 `json:"rps"`
 	CPUSaturation    float64 `json:"cpu_saturation_percent"`
 	MemorySaturation float64 `json:"memory_saturation_percent"`
+	AdditionalMetrics map[string]float64 `json:"additional_metrics,omitempty"` // New field for user-defined metrics
 }
 
 // ImpactAnalysis represents the full analysis of a single change event.

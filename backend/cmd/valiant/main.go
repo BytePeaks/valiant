@@ -51,15 +51,18 @@ func main() {
 	if err := store.RunMigration("migrations/003_add_execution_fields.sql"); err != nil {
 		log.Fatalf("Failed to run migrations (003): %v", err)
 	}
+	if err := store.RunMigration("migrations/005_add_service_preferences.sql"); err != nil {
+		log.Fatalf("Failed to run migrations (005): %v", err)
+	}
 	fmt.Println("Database migrations applied")
 
-	metricClient, err := metrics.NewPrometheusClient(cfg.Prometheus.URL, cfg.Prometheus.Queries)
+	metricClient, err := metrics.NewPrometheusClient(cfg.Prometheus.URL, cfg.Prometheus.Queries, cfg.Prometheus.AdditionalMetrics)
 	if err != nil {
 		log.Fatalf("Failed to initialize prometheus client: %v", err)
 	}
 
 	engine := correlator.NewEngine(store, metricClient, cfg)
-	router := api.NewRouter(store, engine)
+	router := api.NewRouter(store, engine, metricClient)
 
 	// Setup application context
 	ctx, cancel := context.WithCancel(context.Background())

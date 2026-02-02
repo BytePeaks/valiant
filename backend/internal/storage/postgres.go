@@ -219,7 +219,6 @@ func (s *PostgresStorage) GetChangeEventByID(ctx context.Context, id string) (do
 
 	return event, nil
 }
-
 func (s *PostgresStorage) GetServices(ctx context.Context) ([]string, error) {
 	query := `
 		SELECT DISTINCT unnest(affected_services) as service
@@ -371,4 +370,35 @@ func (s *PostgresStorage) GetImpactAnalysisByEventID(ctx context.Context, eventI
 	}
 
 	return &analysis, nil
+}
+
+func (s *PostgresStorage) GetServicePreferences(ctx context.Context, serviceName string) ([]string, error) {
+	query := `
+		SELECT visible_metrics FROM service_preferences WHERE service_name = $1
+	`
+	var visibleMetrics pq.StringArray
+	err := s.db.QueryRowContext(ctx, query, serviceName).Scan(&visibleMetrics)
+
+	if err == sql.ErrNoRows {
+		return []string{}, nil // Return empty slice if no preferences found
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get service preferences for %s: %w", serviceName, err)
+	}
+
+	return []string(visibleMetrics), nil
+}
+
+func (s *PostgresStorage) SaveServicePreferences(ctx context.Context, serviceName string, visibleMetrics []string) error {
+	query := `
+		INSERT INTO service_preferences (service_name, visible_metrics)
+		VALUES ($1, $2)
+		ON CONFLICT (service_name) DO UPDATE SET
+			visible_metrics = EXCLUDED.visible_metrics
+	`
+	_, err := s.db.ExecContext(ctx, query, serviceName, pq.Array(visibleMetrics))
+	if err != nil {
+		return fmt.Errorf("failed to save service preferences for %s: %w", serviceName, err)
+	}
+	return nil
 }

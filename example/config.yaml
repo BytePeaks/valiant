@@ -28,6 +28,16 @@ prometheus:
   #   cpu_saturation: `avg_over_time(sum(rate(container_cpu_usage_seconds_total{container=~"{{ .Services }}"}[1m]))[{{ .Duration }}])`
   #   memory_saturation: `avg_over_time(sum(container_memory_usage_bytes{container=~"{{ .Services }}"})[{{ .Duration }}])`
 
+  # Additional Metrics
+  # ------------------
+  # Define a list of custom PromQL queries. These will be collected for every analysis.
+  # Users can then choose which metrics (core and additional) to view in the UI.
+  additional_metrics:
+    - name: "orders_per_minute"
+      query: `sum(rate(app_orders_total{service=~"{{ .Services }}"}[1m])) * 60`
+    - name: "payment_failure_rate"
+      query: `sum(rate(app_payment_failures_total{service=~"{{ .Services }}"}[1m])) / sum(rate(app_payments_total{service=~"{{ .Services }}"}[1m]))`
+
 # Kubernetes Collector Configuration
 # ----------------------------------
 kubernetes:

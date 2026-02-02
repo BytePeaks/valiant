@@ -5,18 +5,22 @@ import (
 	"net/http"
 	"valiant/internal/correlator"
 	"valiant/internal/domain"
+	"valiant/internal/metrics" // Import metrics package
 	"valiant/internal/storage"
+	"strings"
 )
 
 type Router struct {
 	storage    storage.Storage
 	correlator *correlator.Engine
+	metrics    metrics.MetricsProvider // New field
 }
 
-func NewRouter(s storage.Storage, c *correlator.Engine) *Router {
+func NewRouter(s storage.Storage, c *correlator.Engine, m metrics.MetricsProvider) *Router {
 	return &Router{
 		storage:    s,
 		correlator: c,
+		metrics:    m, // Initialize new field
 	}
 }
 
@@ -29,7 +33,9 @@ func (router *Router) Handler() http.Handler {
 
 	mux.HandleFunc("/api/v1/events", router.handleEvents)
 	mux.HandleFunc("/api/v1/services", router.handleServices)
+	mux.HandleFunc("/api/v1/services/", router.handleServicePreferences)
 	mux.HandleFunc("/api/v1/analyze", router.handleAnalysis)
+	mux.HandleFunc("/api/v1/metrics", router.handleMetrics)
 
 	return corsMiddleware(mux)
 }
@@ -47,6 +53,47 @@ func (router *Router) handleServices(w http.ResponseWriter, r *http.Request) {
 	}
 
 	json.NewEncoder(w).Encode(services)
+}
+
+func (router *Router) handleMetrics(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	metricNames := router.metrics.GetAvailableMetrics()
+	json.NewEncoder(w).Encode(metricNames)
+}
+
+func (router *Router) handleServicePreferences(w http.ResponseWriter, r *http.Request) {
+	serviceName := strings.TrimPrefix(r.URL.Path, "/api/v1/services/")
+	serviceName = strings.TrimSuffix(serviceName, "/preferences")
+
+	if r.Method == http.MethodGet {
+		preferences, err := router.storage.GetServicePreferences(r.Context(), serviceName)
+		if err != nil {
+			http.Error(w, "Failed to get service preferences", http.StatusInternalServerError)
+			return
+		}
+		json.NewEncoder(w).Encode(preferences)
+		return
+	}
+
+	if r.Method == http.MethodPost {
+		var preferences []string
+		if err := json.NewDecoder(r.Body).Decode(&preferences); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := router.storage.SaveServicePreferences(r.Context(), serviceName, preferences); err != nil {
+			http.Error(w, "Failed to save service preferences", http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	w.WriteHeader(http.StatusMethodNotAllowed)
 }
 
 func corsMiddleware(next http.Handler) http.Handler {
