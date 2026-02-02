@@ -1,17 +1,16 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { ChangeEvent, fetchChangeEvents, fetchServices } from '@/lib/api';
+import { ChangeEvent, fetchChangeEvents, fetchServices, fetchNamespaces } from '@/lib/api';
 import Timeline from '@/components/timeline/timeline';
-import { RefreshCcw, Filter, ExternalLink, ChevronDown, ChevronUp } from 'lucide-react';
+import { RefreshCcw, Filter, ExternalLink, ChevronDown, ChevronUp, Layers } from 'lucide-react';
 import Link from 'next/link';
 
 export default function Home() {
   const [events, setEvents] = useState<ChangeEvent[]>([]);
   const [services, setServices] = useState<string[]>([]);
   const [selectedService, setSelectedService] = useState<string | null>(null);
-  // @TODO: Replace with actual namespace data and API call
-  const [namespaces, setNamespaces] = useState<string[]>(['production', 'staging']);
+  const [namespaces, setNamespaces] = useState<string[]>([]);
   const [selectedNamespace, setSelectedNamespace] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [visibleCount, setVisibleCount] = useState(5);
@@ -19,10 +18,11 @@ export default function Home() {
 
   const fetchData = () => {
     setLoading(true);
-    Promise.all([fetchChangeEvents(), fetchServices()])
-      .then(([eventsData, servicesData]) => {
+    Promise.all([fetchChangeEvents(), fetchServices(), fetchNamespaces()])
+      .then(([eventsData, servicesData, namespacesData]) => {
         setEvents(eventsData);
         setServices(servicesData);
+        setNamespaces(namespacesData);
         setVisibleCount(5);
       })
       .finally(() => setLoading(false));
@@ -36,9 +36,11 @@ export default function Home() {
     setVisibleCount((prev) => prev + 5);
   };
 
-  const filteredEvents = selectedService 
-    ? events.filter(e => e.affected_services.includes(selectedService))
-    : events;
+  const filteredEvents = events.filter(event => {
+    const serviceMatch = selectedService ? event.affected_services.includes(selectedService) : true;
+    const namespaceMatch = selectedNamespace ? event.metadata?.env === selectedNamespace : true;
+    return serviceMatch && namespaceMatch;
+  });
 
   const visibleEvents = filteredEvents.slice(0, visibleCount);
   const hasMore = visibleCount < filteredEvents.length;
@@ -81,8 +83,9 @@ export default function Home() {
                     <button
                       key={namespace}
                       onClick={() => setSelectedNamespace(namespace === selectedNamespace ? null : namespace)}
-                      className={`px-4 py-1.5 rounded-full text-xs font-bold transition-all border ${selectedNamespace === namespace ? 'bg-blue-600 border-blue-600 text-white' : 'bg-white border-gray-200 text-gray-600 hover:border-blue-300'}`}
+                      className={`flex items-center gap-1 px-4 py-1.5 rounded-full text-xs font-bold transition-all border ${selectedNamespace === namespace ? 'bg-blue-600 border-blue-600 text-white' : 'bg-white border-gray-200 text-gray-600 hover:border-blue-300'}`}
                     >
+                      <Layers className="w-3 h-3" />
                       {namespace}
                     </button>
                   ))}

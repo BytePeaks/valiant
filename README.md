@@ -133,8 +133,8 @@ The fastest way to get started is with Docker Compose.
 ```bash
 git clone https://github.com/BytePeaks/valiant.git
 cd valiant
-cp example/config.yaml ./backend/config.yaml
 docker-compose up --build -d
+# It auto mounts /example/config.yaml at docker-compose run
 ```
 
 This script will:
