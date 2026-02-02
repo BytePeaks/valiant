@@ -156,13 +156,32 @@ func (e *Engine) AnalyzeImpact(ctx context.Context, event domain.ChangeEvent) (d
 }
 
 func calculateDeltas(baseline, impact domain.MetricValues) domain.MetricValues {
-	return domain.MetricValues{
-		ErrorRate:        calculateDelta(baseline.ErrorRate, impact.ErrorRate),
-		LatencyP95:       calculateDelta(baseline.LatencyP95, impact.LatencyP95),
-		RPS:              calculateDelta(baseline.RPS, impact.RPS),
-		CPUSaturation:    calculateDelta(baseline.CPUSaturation, impact.CPUSaturation),
-		MemorySaturation: calculateDelta(baseline.MemorySaturation, impact.MemorySaturation),
+	deltas := domain.MetricValues{
+		ErrorRate:  calculateDelta(baseline.ErrorRate, impact.ErrorRate),
+		LatencyP95: calculateDelta(baseline.LatencyP95, impact.LatencyP95),
+		RPS:        calculateDelta(baseline.RPS, impact.RPS),
+		CPU:        calculateDelta(baseline.CPU, impact.CPU),
+		Memory:     calculateDelta(baseline.Memory, impact.Memory),
+		AdditionalMetrics: make(map[string]float64), // Initialize the map
 	}
+
+	for key, baselineVal := range baseline.AdditionalMetrics {
+		if impactVal, ok := impact.AdditionalMetrics[key]; ok {
+			deltas.AdditionalMetrics[key] = calculateDelta(baselineVal, impactVal)
+		} else {
+			// If an additional metric is in baseline but not in impact, treat impact as 0 for delta calculation
+			deltas.AdditionalMetrics[key] = calculateDelta(baselineVal, 0)
+		}
+	}
+	// Also consider metrics that might be in impact but not baseline (newly introduced metrics, though less likely for this use case)
+	for key, impactVal := range impact.AdditionalMetrics {
+		if _, ok := baseline.AdditionalMetrics[key]; !ok {
+			// If an additional metric is in impact but not in baseline, treat baseline as 0 for delta calculation
+			deltas.AdditionalMetrics[key] = calculateDelta(0, impactVal)
+		}
+	}
+
+	return deltas
 }
 
 func calculateDelta(baseline, impact float64) float64 {
@@ -182,8 +201,8 @@ func calculateImpactScore(deltas domain.MetricValues) float64 {
 
 	normError := math.Max(0, math.Min(deltas.ErrorRate/2.0, 1.0))
 	normLatency := math.Max(0, math.Min(deltas.LatencyP95/2.0, 1.0))
-	normCPU := math.Max(0, math.Min(deltas.CPUSaturation/2.0, 1.0))
-	normMem := math.Max(0, math.Min(deltas.MemorySaturation/2.0, 1.0))
+	normCPU := math.Max(0, math.Min(deltas.CPU/2.0, 1.0))
+	normMem := math.Max(0, math.Min(deltas.Memory/2.0, 1.0))
 
 	// RPS: We care about drops. A drop of 100% (-1.0) should be score 1.0.
 	// Delta is (impact - baseline) / baseline.

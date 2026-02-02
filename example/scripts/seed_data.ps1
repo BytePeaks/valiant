@@ -17,6 +17,10 @@ function Send-Event {
     # Generate a random 12-char ID
     $id = -join ((48..57) + (65..90) + (97..122) | Get-Random -Count 12 | ForEach-Object { [char]$_ })
 
+    # Randomly pick an environment
+    $envs = @("default", "payment-app")
+    $env = $envs | Get-Random
+
     $body = @{
         id = $id
         trigger_type = $Trigger
@@ -27,14 +31,14 @@ function Send-Event {
         summary = $Summary
         metadata = @{
             author = "konrad"
-            env = "production"
+            env = $env
             version = "v2.4.$(Get-Random -Minimum 0 -Maximum 9)"
         }
     } | ConvertTo-Json -Depth 5
 
     try {
         $response = Invoke-RestMethod -Uri "$ApiUrl/events" -Method Post -Body $body -ContentType "application/json"
-        Write-Host " Sent: $Summary ($MinutesAgo min ago)"
+        Write-Host " Sent: $Summary ($MinutesAgo min ago, env: $env)"
     } catch {
         Write-Error "Failed to send event '$Summary': $_"
     }

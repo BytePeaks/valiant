@@ -42,6 +42,16 @@ func (m *MockStorage) GetImpactAnalysisByEventID(ctx context.Context, eventID st
 	}
 	return nil, nil // Not found
 }
+func (m *MockStorage) GetServicePreferences(ctx context.Context, serviceName string) ([]string, error) {
+	return []string{}, nil
+}
+func (m *MockStorage) SaveServicePreferences(ctx context.Context, serviceName string, visibleMetrics []string) error {
+	return nil
+}
+
+func (m *MockStorage) GetNamespaces(ctx context.Context) ([]string, error) {
+	return []string{}, nil
+}
 
 // MockMetrics implements metrics.MetricsProvider
 type MockMetrics struct {
@@ -50,21 +60,18 @@ type MockMetrics struct {
 }
 
 func (m *MockMetrics) GetAverageMetrics(ctx context.Context, services []string, start, end time.Time) (domain.MetricValues, error) {
-	// Simple heuristic: if start time is "old" (baseline), return baseline
-	// In reality, tests will control this via the call order or context, but for simple unit test:
-	// We can check the duration between start/end to guess, or just alternate.
-	// A better way for deterministic testing is to define behavior based on the *window*.
-	// But since the Engine calls Baseline first, then Impact...
-	
-	// Let's just return fixed values for the test case setup.
-	// This mock is a bit simplistic; for a real test we might want checking arguments.
 	return m.baseline, nil
+}
+
+func (m *MockMetrics) GetAvailableMetrics() []domain.MetricInfo {
+	return []domain.MetricInfo{}
 }
 
 // Better MockMetrics that allows specifying return values for specific calls
 type ControllableMetrics struct {
-	Calls []domain.MetricValues
-	Index int
+	Calls            []domain.MetricValues
+	Index            int
+	AvailableMetrics []domain.MetricInfo
 }
 
 func (m *ControllableMetrics) GetAverageMetrics(ctx context.Context, services []string, start, end time.Time) (domain.MetricValues, error) {
@@ -74,6 +81,10 @@ func (m *ControllableMetrics) GetAverageMetrics(ctx context.Context, services []
 	val := m.Calls[m.Index]
 	m.Index++
 	return val, nil
+}
+
+func (m *ControllableMetrics) GetAvailableMetrics() []domain.MetricInfo {
+	return m.AvailableMetrics
 }
 
 func TestAnalyzeImpact_WindowNotClosed(t *testing.T) {
@@ -257,6 +268,9 @@ type ErrorMetrics struct {
 func (m *ErrorMetrics) GetAverageMetrics(ctx context.Context, s []string, start, end time.Time) (domain.MetricValues, error) {
 	return domain.MetricValues{}, m.err
 }
+func (m *ErrorMetrics) GetAvailableMetrics() []domain.MetricInfo {
+	return []domain.MetricInfo{}
+}
 
 func TestAnalyzeImpact_NoServices(t *testing.T) {
 	cfg := &config.Config{}
@@ -307,7 +321,7 @@ func TestAnalyzeImpact_InstantRollout(t *testing.T) {
 func TestAnalyzeImpact_IntentExecutionLinking(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Analysis.IntentExecutionCorrelationDur = 1 * time.Hour
-	metrics := &ControllableMetrics{Calls: []domain.MetricValues{{}, {}}}
+	metrics := &ControllableMetrics{Calls: []domain.MetricValues{{}, {}}, AvailableMetrics: []domain.MetricInfo{}}
 	eventTime := time.Now().Add(-2 * time.Hour)
 
 	t.Run("Linked GitOps event", func(t *testing.T) {
@@ -403,3 +417,69 @@ func TestAnalyzeImpact_IntentExecutionLinking(t *testing.T) {
 	})
 }
 
+func TestAnalyzeImpact_AdditionalMetrics(t *testing.T) {
+	// Setup config with a custom metric set
+	cfg := &config.Config{}
+	cfg.Analysis.BaselineDur = 30 * time.Minute
+	cfg.Analysis.ImpactDur = 30 * time.Minute
+	
+	cfg.Prometheus.AdditionalMetrics = []config.PrometheusMetric{
+		{Name: "custom_metric_a", Query: "some_promql_query_a"},
+		{Name: "custom_metric_b", Query: "some_promql_query_b"},
+	}
+
+	store := &MockStorage{}
+	
+	// Let's create two distinct AdditionalMetrics data for baseline and impact
+	baselineAdditional := map[string]float64{
+		"custom_metric_a": 10.0,
+		"custom_metric_b": 20.0,
+	}
+	impactAdditional := map[string]float64{
+		"custom_metric_a": 15.0, // Increased by 50%
+		"custom_metric_b": 10.0, // Decreased by 50%
+	}
+
+	metricsWithAdditional := &ControllableMetrics{
+		Calls: []domain.MetricValues{
+			// Baseline call
+			{ErrorRate: 0.01, LatencyP95: 100, RPS: 100, AdditionalMetrics: baselineAdditional},
+			// Impact call
+			{ErrorRate: 0.01, LatencyP95: 100, RPS: 100, AdditionalMetrics: impactAdditional},
+		},
+		AvailableMetrics: []domain.MetricInfo{{Name: "custom_metric_a"}, {Name: "custom_metric_b"}},
+	}
+
+	engine := correlator.NewEngine(store, metricsWithAdditional, cfg)
+
+	event := domain.ChangeEvent{
+		ID:        "evt-additional-metrics",
+		Timestamp: time.Now().Add(-1 * time.Hour),
+	}
+
+	analysis, err := engine.AnalyzeImpact(context.Background(), event)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Assertions for additional metrics
+	if analysis.BaselineMetrics.AdditionalMetrics["custom_metric_a"] != 10.0 {
+		t.Errorf("expected baseline custom_metric_a to be 10.0, got %f", analysis.BaselineMetrics.AdditionalMetrics["custom_metric_a"])
+	}
+	if analysis.ImpactMetrics.AdditionalMetrics["custom_metric_a"] != 15.0 {
+		t.Errorf("expected impact custom_metric_a to be 15.0, got %f", analysis.ImpactMetrics.AdditionalMetrics["custom_metric_a"])
+	}
+	if analysis.Deltas.AdditionalMetrics["custom_metric_a"] != 0.5 { // (15-10)/10 = 0.5
+		t.Errorf("expected delta custom_metric_a to be 0.5, got %f", analysis.Deltas.AdditionalMetrics["custom_metric_a"])
+	}
+
+	if analysis.Deltas.AdditionalMetrics["custom_metric_b"] != -0.5 { // (10-20)/20 = -0.5
+		t.Errorf("expected delta custom_metric_b to be -0.5, got %f", analysis.Deltas.AdditionalMetrics["custom_metric_b"])
+	}
+
+	// Also test the GetAvailableMetrics()
+	availableMetrics := metricsWithAdditional.GetAvailableMetrics()
+	if len(availableMetrics) != 2 {
+		t.Errorf("expected 2 available metrics, got %d", len(availableMetrics))
+	}
+}

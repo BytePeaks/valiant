@@ -66,6 +66,16 @@ func (m *LinkingMockStorage) SaveImpactAnalysis(ctx context.Context, analysis do
 func (m *LinkingMockStorage) GetImpactAnalysisByEventID(ctx context.Context, eventID string) (*domain.ImpactAnalysis, error) {
 	return nil, nil
 }
+func (m *LinkingMockStorage) GetServicePreferences(ctx context.Context, serviceName string) ([]string, error) {
+	return []string{}, nil
+}
+func (m *LinkingMockStorage) SaveServicePreferences(ctx context.Context, serviceName string, visibleMetrics []string) error {
+	return nil
+}
+
+func (m *LinkingMockStorage) GetNamespaces(ctx context.Context) ([]string, error) {
+	return []string{}, nil
+}
 
 
 func TestIntentExecutionLinking(t *testing.T) {

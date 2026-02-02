@@ -21,8 +21,9 @@ type MetricValues struct {
 	ErrorRate        float64 `json:"error_rate"`
 	LatencyP95       float64 `json:"latency_p95_ms"`
 	RPS              float64 `json:"rps"`
-	CPUSaturation    float64 `json:"cpu_saturation_percent"`
-	MemorySaturation float64 `json:"memory_saturation_percent"`
+	CPU    float64 `json:"cpu"`
+	Memory float64 `json:"memory"`
+	AdditionalMetrics map[string]float64 `json:"additional_metrics,omitempty"` // New field for user-defined metrics
 }
 
 // ImpactAnalysis represents the full analysis of a single change event.
@@ -35,4 +36,9 @@ type ImpactAnalysis struct {
 	ImpactScore      float64      `json:"impact_score"`      // 0.0 to 1.0
 	ImpactLevel      string       `json:"impact_level"`      // "NONE", "LOW", "MEDIUM", "HIGH"
 	ConfidenceScore  float64      `json:"confidence_score"` // 0.0 to 1.0
+}
+
+type MetricInfo struct {
+	Name string `json:"name"`
+	Icon string `json:"icon,omitempty"`
 }

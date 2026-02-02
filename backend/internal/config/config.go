@@ -7,12 +7,19 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+type PrometheusMetric struct {
+	Name  string `yaml:"name"`
+	Query string `yaml:"query"`
+	Icon  string `yaml:"icon,omitempty"`
+}
+
 type Config struct {
 	DatabaseURL string `yaml:"database_url"`
 	Port        string `yaml:"port"`
 	Prometheus  struct {
-		URL     string            `yaml:"url"`
-		Queries map[string]string `yaml:"queries"`
+		URL              string            `yaml:"url"`
+		Queries          map[string]string `yaml:"queries"`
+		AdditionalMetrics []PrometheusMetric `yaml:"additional_metrics"`
 	} `yaml:"prometheus"`
 	Kubernetes struct {
 		Enabled           bool     `yaml:"enabled"`
@@ -39,11 +46,11 @@ func Load(configPath string) (*Config, error) {
 	}
 	cfg.Prometheus.URL = GetEnv("PROMETHEUS_URL", "http://localhost:9090")
 	cfg.Prometheus.Queries = map[string]string{
-		"error_rate":        `avg_over_time(sum(rate(http_requests_total{service=~"{{ .Services }}",status=~"5.."}[1m]))[{{ .Duration }}])`,
-		"latency_p95":       `avg_over_time(histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{service=~"{{ .Services }}"}[1m])))[{{ .Duration }}])`,
-		"rps":              `avg_over_time(sum(rate(http_requests_total{service=~"{{ .Services }}"}[1m]))[{{ .Duration }}])`,
-		"cpu_saturation":    `avg_over_time(sum(rate(container_cpu_usage_seconds_total{container=~"{{ .Services }}"}[1m]))[{{ .Duration }}])`,
-		"memory_saturation": `avg_over_time(sum(container_memory_usage_bytes{container=~"{{ .Services }}"})[{{ .Duration }}])`,
+		"error_rate":                  `avg_over_time(sum(rate(http_requests_total{service=~"{{ .Services }}",status=~"5.."}[1m]))[{{ .Duration }}])`,
+		"latency_p95_ms":              `avg_over_time(histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{service=~"{{ .Services }}"}[1m])))[{{ .Duration }}])`,
+		"rps":                         `avg_over_time(sum(rate(http_requests_total{service=~"{{ .Services }}"}[1m]))[{{ .Duration }}])`,
+		"cpu":      `avg_over_time(sum(rate(container_cpu_usage_seconds_total{container=~"{{ .Services }}"}[1m]))[{{ .Duration }}])`,
+		"memory":   `avg_over_time(sum(container_memory_usage_bytes{container=~"{{ .Services }}"})[{{ .Duration }}])`,
 	}
 	cfg.Analysis.BaselineWindow = "30m"
 	cfg.Analysis.ImpactWindow = "30m"
