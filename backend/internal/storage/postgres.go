@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"valiant/internal/domain"
 
@@ -21,16 +22,50 @@ func NewPostgresStorage(db *sql.DB) *PostgresStorage {
 }
 
 func (s *PostgresStorage) RunMigration(schemaPath string) error {
+	migrationName := filepath.Base(schemaPath)
+
+	// Special handling for the initial schema_migrations table creation
+	if migrationName != "000_create_schema_migrations_table.sql" {
+		// Check if migration has already been applied
+		var count int
+		err := s.db.QueryRow("SELECT COUNT(*) FROM schema_migrations WHERE version = $1", migrationName).Scan(&count)
+		if err != nil {
+			return fmt.Errorf("failed to check migration status for %s: %w", migrationName, err)
+		}
+		if count > 0 {
+			// fmt.Printf("Migration %s already applied, skipping.\n", migrationName) // Only uncomment for debugging
+			return nil
+		}
+	}
+
 	content, err := os.ReadFile(schemaPath)
 	if err != nil {
-		return fmt.Errorf("failed to read migration file: %w", err)
+		return fmt.Errorf("failed to read migration file %s: %w", migrationName, err)
 	}
 
-	if _, err := s.db.Exec(string(content)); err != nil {
-		return fmt.Errorf("failed to execute migration: %w", err)
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction for migration %s: %w", migrationName, err)
 	}
 
-	return nil
+	if _, err := tx.Exec(string(content)); err != nil {
+		tx.Rollback()
+		return fmt.Errorf("failed to execute migration %s: %w", migrationName, err)
+	}
+
+	// Record migration as applied, unless it's the schema_migrations table itself
+	if migrationName != "000_create_schema_migrations_table.sql" {
+		if _, err := tx.Exec("INSERT INTO schema_migrations (version) VALUES ($1)", migrationName); err != nil {
+			tx.Rollback()
+			return fmt.Errorf("failed to record migration %s: %w", migrationName, err)
+		}
+	} else {
+		// If it's the schema_migrations table, we don't record it in itself during its creation.
+		// It's considered implicitly applied once successfully executed.
+		// Future runs will simply CREATE TABLE IF NOT EXISTS without issues.
+	}
+
+	return tx.Commit()
 }
 
 func (s *PostgresStorage) SaveChangeEvent(ctx context.Context, event domain.ChangeEvent) error {
