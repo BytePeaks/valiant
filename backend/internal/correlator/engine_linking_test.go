@@ -18,7 +18,7 @@ type LinkingMockStorage struct {
 }
 
 func (m *LinkingMockStorage) SaveChangeEvent(ctx context.Context, event domain.ChangeEvent) error { return nil }
-func (m *LinkingMockStorage) GetChangeEvents(ctx context.Context, filters map[string]interface{}) ([]domain.ChangeEvent, error) {
+func (m *LinkingMockStorage) GetChangeEvents(ctx context.Context, filters map[string]interface{}) ([]domain.ChangeEvent, int, error) {
 	m.filtersApplied = filters
 	var results []domain.ChangeEvent
 
@@ -53,7 +53,10 @@ func (m *LinkingMockStorage) GetChangeEvents(ctx context.Context, filters map[st
 		results = append(results, event)
 	}
 
-	return results, nil
+	return results, len(results), nil
+}
+func (m *LinkingMockStorage) DeleteChangeEventsOlderThan(ctx context.Context, cutoff time.Time) (int64, error) {
+	return 0, nil
 }
 func (m *LinkingMockStorage) GetChangeEventByID(ctx context.Context, id string) (domain.ChangeEvent, error) {
 	return domain.ChangeEvent{}, nil

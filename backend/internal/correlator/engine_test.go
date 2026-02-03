@@ -17,11 +17,14 @@ type MockStorage struct {
 }
 
 func (m *MockStorage) SaveChangeEvent(ctx context.Context, event domain.ChangeEvent) error { return nil }
-func (m *MockStorage) GetChangeEvents(ctx context.Context, filters map[string]interface{}) ([]domain.ChangeEvent, error) {
+func (m *MockStorage) GetChangeEvents(ctx context.Context, filters map[string]interface{}) ([]domain.ChangeEvent, int, error) {
 	if m.changeEvents != nil {
-		return m.changeEvents, nil
+		return m.changeEvents, len(m.changeEvents), nil
 	}
-	return nil, nil
+	return nil, 0, nil
+}
+func (m *MockStorage) DeleteChangeEventsOlderThan(ctx context.Context, cutoff time.Time) (int64, error) {
+	return 0, nil
 }
 func (m *MockStorage) GetChangeEventByID(ctx context.Context, id string) (domain.ChangeEvent, error) {
 	return domain.ChangeEvent{}, nil

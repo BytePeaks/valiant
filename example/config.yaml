@@ -77,6 +77,16 @@ kubernetes:
   # Secret data values and hashes are never exposed in event metadata.
   watch_secrets: true
 
+# Event Retention Configuration
+# -----------------------------
+retention:
+  # How long to keep change events before automatic cleanup.
+  # Supports "d" suffix for days (e.g. "90d") and standard Go durations (e.g. "2160h").
+  event_ttl: "90d"
+
+  # How often the retention worker runs to delete expired events.
+  cleanup_interval: "1h"
+
 # Analysis Window Configuration
 # -----------------------------
 analysis:
