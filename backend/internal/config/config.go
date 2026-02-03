@@ -27,6 +27,8 @@ type Config struct {
 		Namespaces        []string `yaml:"namespaces"`
 		RequireAnnotation bool     `yaml:"require_annotation"`
 		AllowedSources    []string `yaml:"allowed_sources"`
+		WatchConfigMaps   bool     `yaml:"watch_configmaps"`
+		WatchSecrets      bool     `yaml:"watch_secrets"`
 	} `yaml:"kubernetes"`
 	Analysis struct {
 		BaselineWindow string        `yaml:"baseline_window"` // e.g., "30m"
