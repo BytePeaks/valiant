@@ -8,6 +8,7 @@ export interface ChangeEvent {
   affected_services: string[];
   summary: string;
   metadata: Record<string, string>;
+  analysis_status?: 'pending' | 'ready' | 'completed';
 }
 
 export interface MetricValues {

@@ -60,3 +60,7 @@ yarn-error.log*
 # Other
 GEMINI.md
 CLAUDE.md
+
+# Temporary
+tmp/
+tmp/*
