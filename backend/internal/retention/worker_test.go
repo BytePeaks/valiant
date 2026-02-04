@@ -49,6 +49,10 @@ func (m *mockStorage) SaveServicePreferences(ctx context.Context, serviceName st
 	return nil
 }
 
+func (m *mockStorage) GetAnalyzedEventIDs(ctx context.Context, eventIDs []string) (map[string]bool, error) {
+	return map[string]bool{}, nil
+}
+
 func (m *mockStorage) DeleteChangeEventsOlderThan(ctx context.Context, cutoff time.Time) (int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

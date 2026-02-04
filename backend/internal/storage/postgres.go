@@ -449,6 +449,29 @@ func (s *PostgresStorage) GetImpactAnalysisByEventID(ctx context.Context, eventI
 	return &analysis, nil
 }
 
+func (s *PostgresStorage) GetAnalyzedEventIDs(ctx context.Context, eventIDs []string) (map[string]bool, error) {
+	if len(eventIDs) == 0 {
+		return map[string]bool{}, nil
+	}
+
+	query := `SELECT event_id FROM impact_analysis_snapshots WHERE event_id = ANY($1)`
+	rows, err := s.db.QueryContext(ctx, query, pq.Array(eventIDs))
+	if err != nil {
+		return nil, fmt.Errorf("failed to check analyzed event IDs: %w", err)
+	}
+	defer rows.Close()
+
+	result := make(map[string]bool)
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		result[id] = true
+	}
+	return result, nil
+}
+
 func (s *PostgresStorage) GetServicePreferences(ctx context.Context, serviceName string) ([]string, error) {
 	query := `
 		SELECT visible_metrics FROM service_preferences WHERE service_name = $1

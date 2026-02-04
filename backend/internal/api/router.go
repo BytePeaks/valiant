@@ -117,6 +117,32 @@ func corsMiddleware(next http.Handler) http.Handler {
 	})
 }
 
+// eventWithStatus wraps a ChangeEvent with its analysis status for the API response.
+type eventWithStatus struct {
+	domain.ChangeEvent
+	AnalysisStatus string `json:"analysis_status"` // "pending", "ready", "completed"
+}
+
+// computeAnalysisStatus determines the analysis state for an event.
+// "completed" = snapshot exists, "pending" = impact window still open, "ready" = window closed, no analysis yet.
+func (router *Router) computeAnalysisStatus(event domain.ChangeEvent, analyzed bool) string {
+	if analyzed {
+		return "completed"
+	}
+
+	impactDur := router.config.Analysis.ImpactDur
+	impactPivot := event.Timestamp
+	if event.EndTime != nil {
+		impactPivot = *event.EndTime
+	}
+	impactEnd := impactPivot.Add(5 * time.Minute).Add(impactDur)
+
+	if time.Now().UTC().Before(impactEnd) {
+		return "pending"
+	}
+	return "ready"
+}
+
 func (router *Router) handleEvents(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPost {
 		var event domain.ChangeEvent
@@ -181,6 +207,26 @@ func (router *Router) handleEvents(w http.ResponseWriter, r *http.Request) {
 			events = []domain.ChangeEvent{}
 		}
 
+		// Batch-check which events have analysis snapshots
+		eventIDs := make([]string, len(events))
+		for i, e := range events {
+			eventIDs[i] = e.ID
+		}
+		analyzedMap, err := router.storage.GetAnalyzedEventIDs(r.Context(), eventIDs)
+		if err != nil {
+			http.Error(w, "Failed to check analysis status", http.StatusInternalServerError)
+			return
+		}
+
+		// Enrich events with analysis status
+		enriched := make([]eventWithStatus, len(events))
+		for i, e := range events {
+			enriched[i] = eventWithStatus{
+				ChangeEvent:    e,
+				AnalysisStatus: router.computeAnalysisStatus(e, analyzedMap[e.ID]),
+			}
+		}
+
 		limit := 50
 		if l, ok := filters["limit"].(int); ok && l > 0 {
 			limit = l
@@ -194,7 +240,7 @@ func (router *Router) handleEvents(w http.ResponseWriter, r *http.Request) {
 		}
 
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"events": events,
+			"events": enriched,
 			"total":  total,
 			"limit":  limit,
 			"offset": offset,

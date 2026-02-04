@@ -17,6 +17,7 @@ type Storage interface {
 	
 	SaveImpactAnalysis(ctx context.Context, analysis domain.ImpactAnalysis) error
 	GetImpactAnalysisByEventID(ctx context.Context, eventID string) (*domain.ImpactAnalysis, error)
+	GetAnalyzedEventIDs(ctx context.Context, eventIDs []string) (map[string]bool, error)
 
 	GetServicePreferences(ctx context.Context, serviceName string) ([]string, error)
 	SaveServicePreferences(ctx context.Context, serviceName string, visibleMetrics []string) error
