@@ -33,15 +33,55 @@ export interface TimelineEventProps {
   event: ChangeEvent;
 }
 
+export interface EventFilters {
+  limit?: number;
+  offset?: number;
+  service?: string;
+  namespace?: string;
+  change_type?: string;
+  from?: string;
+  to?: string;
+  search?: string;
+}
+
+export interface EventsResponse {
+  events: ChangeEvent[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080/api/v1';
 
-export async function fetchChangeEvents(): Promise<ChangeEvent[]> {
-  const res = await fetch(`${API_BASE_URL}/events`);
+export async function fetchChangeEvents(
+  filters?: EventFilters,
+  signal?: AbortSignal
+): Promise<EventsResponse> {
+  const params = new URLSearchParams();
+  if (filters) {
+    for (const [key, value] of Object.entries(filters)) {
+      if (value !== undefined && value !== null && value !== '') {
+        params.set(key, String(value));
+      }
+    }
+  }
+  const query = params.toString();
+  const url = query ? `${API_BASE_URL}/events?${query}` : `${API_BASE_URL}/events`;
+  const res = await fetch(url, { signal });
   if (!res.ok) {
     throw new Error('Failed to fetch events');
   }
   const data = await res.json();
-  return data || [];
+  // Support both envelope and bare array responses
+  if (Array.isArray(data)) {
+    return { events: data, total: data.length, limit: data.length, offset: 0 };
+  }
+  return {
+    events: data.events || [],
+    total: data.total ?? 0,
+    limit: data.limit ?? 0,
+    offset: data.offset ?? 0,
+  };
 }
 
 export async function fetchServices(): Promise<string[]> {

@@ -3,12 +3,14 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
+	"strings"
+	"time"
+	"valiant/internal/config"
 	"valiant/internal/correlator"
 	"valiant/internal/domain"
-	"valiant/internal/metrics" // Import metrics package
+	"valiant/internal/metrics"
 	"valiant/internal/storage"
-	"valiant/internal/config"
-	"strings"
 )
 
 type Router struct {
@@ -133,12 +135,70 @@ func (router *Router) handleEvents(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if r.Method == http.MethodGet {
-		events, err := router.storage.GetChangeEvents(r.Context(), nil)
+		q := r.URL.Query()
+		filters := make(map[string]interface{})
+
+		if v := q.Get("limit"); v != "" {
+			if n, err := strconv.Atoi(v); err == nil {
+				filters["limit"] = n
+			}
+		}
+		if v := q.Get("offset"); v != "" {
+			if n, err := strconv.Atoi(v); err == nil {
+				filters["offset"] = n
+			}
+		}
+		if v := q.Get("service"); v != "" {
+			filters["services_any_of"] = strings.Split(v, ",")
+		}
+		if v := q.Get("namespace"); v != "" {
+			filters["namespace"] = v
+		}
+		if v := q.Get("change_type"); v != "" {
+			filters["change_type"] = v
+		}
+		if v := q.Get("from"); v != "" {
+			if t, err := time.Parse(time.RFC3339, v); err == nil {
+				filters["from_timestamp"] = t
+			}
+		}
+		if v := q.Get("to"); v != "" {
+			if t, err := time.Parse(time.RFC3339, v); err == nil {
+				filters["to_timestamp"] = t
+			}
+		}
+		if v := q.Get("search"); v != "" {
+			filters["search"] = v
+		}
+
+		events, total, err := router.storage.GetChangeEvents(r.Context(), filters)
 		if err != nil {
 			http.Error(w, "Failed to fetch events", http.StatusInternalServerError)
 			return
 		}
-		json.NewEncoder(w).Encode(events)
+
+		if events == nil {
+			events = []domain.ChangeEvent{}
+		}
+
+		limit := 50
+		if l, ok := filters["limit"].(int); ok && l > 0 {
+			limit = l
+			if limit > 200 {
+				limit = 200
+			}
+		}
+		offset := 0
+		if o, ok := filters["offset"].(int); ok && o >= 0 {
+			offset = o
+		}
+
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"events": events,
+			"total":  total,
+			"limit":  limit,
+			"offset": offset,
+		})
 		return
 	}
 

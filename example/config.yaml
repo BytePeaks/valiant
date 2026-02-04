@@ -66,6 +66,27 @@ kubernetes:
   # Trusted sources for the 'valiant.io/source' annotation.
   allowed_sources: ["argocd", "helm", "cicd"]
 
+  # Watch ConfigMaps for data changes. When enabled, Valiant tracks ConfigMap
+  # data hashes and emits change events when the data is modified.
+  # Affected services are resolved by scanning Deployments that reference the ConfigMap.
+  watch_configmaps: true
+
+  # Watch Secrets for data changes. When enabled, Valiant tracks Secret data
+  # hashes and emits change events when the data is modified.
+  # ServiceAccountToken-type secrets are automatically skipped.
+  # Secret data values and hashes are never exposed in event metadata.
+  watch_secrets: true
+
+# Event Retention Configuration
+# -----------------------------
+retention:
+  # How long to keep change events before automatic cleanup.
+  # Supports "d" suffix for days (e.g. "90d") and standard Go durations (e.g. "2160h").
+  event_ttl: "90d"
+
+  # How often the retention worker runs to delete expired events.
+  cleanup_interval: "1h"
+
 # Analysis Window Configuration
 # -----------------------------
 analysis:

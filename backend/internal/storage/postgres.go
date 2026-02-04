@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 	"valiant/internal/domain"
 
 	"github.com/lib/pq"
@@ -109,11 +110,7 @@ func (s *PostgresStorage) SaveChangeEvent(ctx context.Context, event domain.Chan
 	return nil
 }
 
-func (s *PostgresStorage) GetChangeEvents(ctx context.Context, filters map[string]interface{}) ([]domain.ChangeEvent, error) {
-	query := `
-		SELECT id, source, trigger_type, execution_id, change_type, timestamp, end_time, affected_services, metadata, summary
-		FROM change_events
-	`
+func (s *PostgresStorage) GetChangeEvents(ctx context.Context, filters map[string]interface{}) ([]domain.ChangeEvent, int, error) {
 	var args []interface{}
 	var whereClauses []string
 	argCount := 1
@@ -121,6 +118,11 @@ func (s *PostgresStorage) GetChangeEvents(ctx context.Context, filters map[strin
 	if triggerType, ok := filters["trigger_type"]; ok {
 		whereClauses = append(whereClauses, fmt.Sprintf("trigger_type = $%d", argCount))
 		args = append(args, triggerType)
+		argCount++
+	}
+	if changeType, ok := filters["change_type"]; ok {
+		whereClauses = append(whereClauses, fmt.Sprintf("change_type = $%d", argCount))
+		args = append(args, changeType)
 		argCount++
 	}
 	if from, ok := filters["from_timestamp"]; ok {
@@ -133,6 +135,17 @@ func (s *PostgresStorage) GetChangeEvents(ctx context.Context, filters map[strin
 		args = append(args, to)
 		argCount++
 	}
+	if ns, ok := filters["namespace"]; ok {
+		whereClauses = append(whereClauses, fmt.Sprintf("metadata ->> 'env' = $%d", argCount))
+		args = append(args, ns)
+		argCount++
+	}
+	if search, ok := filters["search"].(string); ok && search != "" {
+		pattern := "%" + search + "%"
+		whereClauses = append(whereClauses, fmt.Sprintf("(summary ILIKE $%d OR metadata::text ILIKE $%d)", argCount, argCount+1))
+		args = append(args, pattern, pattern)
+		argCount += 2
+	}
 	if metadata, ok := filters["metadata_has_any"].(map[string]string); ok && len(metadata) > 0 {
 		var metadataClauses []string
 		for key, value := range metadata {
@@ -143,25 +156,46 @@ func (s *PostgresStorage) GetChangeEvents(ctx context.Context, filters map[strin
 		}
 		whereClauses = append(whereClauses, "("+strings.Join(metadataClauses, " OR ")+")")
 	}
-
 	if services, ok := filters["services_any_of"].([]string); ok && len(services) > 0 {
 		whereClauses = append(whereClauses, fmt.Sprintf("affected_services && $%d", argCount))
 		args = append(args, pq.Array(services))
 		argCount++
 	}
 
+	whereSQL := ""
 	if len(whereClauses) > 0 {
-		query += " WHERE " + strings.Join(whereClauses, " AND ")
+		whereSQL = " WHERE " + strings.Join(whereClauses, " AND ")
 	}
 
-	query += `
-		ORDER BY timestamp DESC
-		LIMIT 100
-	`
+	// Count query
+	countQuery := "SELECT COUNT(*) FROM change_events" + whereSQL
+	var total int
+	if err := s.db.QueryRowContext(ctx, countQuery, args...).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("failed to count change events: %w", err)
+	}
 
-	rows, err := s.db.QueryContext(ctx, query, args...)
+	// Pagination defaults
+	limit := 50
+	offset := 0
+	if l, ok := filters["limit"].(int); ok && l > 0 {
+		limit = l
+		if limit > 200 {
+			limit = 200
+		}
+	}
+	if o, ok := filters["offset"].(int); ok && o >= 0 {
+		offset = o
+	}
+
+	selectQuery := `
+		SELECT id, source, trigger_type, execution_id, change_type, timestamp, end_time, affected_services, metadata, summary
+		FROM change_events` + whereSQL + fmt.Sprintf(`
+		ORDER BY timestamp DESC
+		LIMIT %d OFFSET %d`, limit, offset)
+
+	rows, err := s.db.QueryContext(ctx, selectQuery, args...)
 	if err != nil {
-		return nil, fmt.Errorf("failed to query change events: %w", err)
+		return nil, 0, fmt.Errorf("failed to query change events: %w", err)
 	}
 	defer rows.Close()
 
@@ -186,7 +220,7 @@ func (s *PostgresStorage) GetChangeEvents(ctx context.Context, filters map[strin
 			&event.Summary,
 		)
 		if err != nil {
-			return nil, fmt.Errorf("failed to scan change event: %w", err)
+			return nil, 0, fmt.Errorf("failed to scan change event: %w", err)
 		}
 
 		event.TriggerType = triggerType.String
@@ -198,13 +232,21 @@ func (s *PostgresStorage) GetChangeEvents(ctx context.Context, filters map[strin
 
 		event.AffectedServices = []string(affectedServices)
 		if err := json.Unmarshal(metadataJSON, &event.Metadata); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal metadata: %w", err)
+			return nil, 0, fmt.Errorf("failed to unmarshal metadata: %w", err)
 		}
 
 		events = append(events, event)
 	}
 
-	return events, nil
+	return events, total, nil
+}
+
+func (s *PostgresStorage) DeleteChangeEventsOlderThan(ctx context.Context, cutoff time.Time) (int64, error) {
+	result, err := s.db.ExecContext(ctx, "DELETE FROM change_events WHERE timestamp < $1", cutoff)
+	if err != nil {
+		return 0, fmt.Errorf("failed to delete old change events: %w", err)
+	}
+	return result.RowsAffected()
 }
 
 func (s *PostgresStorage) GetChangeEventByID(ctx context.Context, id string) (domain.ChangeEvent, error) {

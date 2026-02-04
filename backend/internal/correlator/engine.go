@@ -73,7 +73,7 @@ func (e *Engine) AnalyzeImpact(ctx context.Context, event domain.ChangeEvent) (d
 			metadataToLink["image_tag"] = tag
 		}
 
-		ciEvents, err := e.storage.GetChangeEvents(ctx, map[string]interface{}{
+		ciEvents, _, err := e.storage.GetChangeEvents(ctx, map[string]interface{}{
 			"trigger_type":     "CI",
 			"from_timestamp":   from,
 			"to_timestamp":     to,

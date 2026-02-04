@@ -2,12 +2,17 @@ package collector
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"sort"
+	"strings"
 	"time"
 	"valiant/internal/config"
 	"valiant/internal/domain"
 
 	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -15,13 +20,17 @@ import (
 )
 
 type KubernetesCollector struct {
-	clientset        kubernetes.Interface
-	kubeConfigPath   string
-	namespaces       []string
-	requireAnnot     bool
-	allowedSources   []string
-	lastProcessed    map[string]int64    // map["ns/name"]generation
-	lastProcessedSha map[string]string // map["ns/name"]fingerprint
+	clientset         kubernetes.Interface
+	kubeConfigPath    string
+	namespaces        []string
+	requireAnnot      bool
+	allowedSources    []string
+	watchConfigMaps   bool
+	watchSecrets      bool
+	lastProcessed     map[string]int64  // map["ns/name"]generation
+	lastProcessedSha  map[string]string // map["ns/name"]fingerprint
+	lastConfigMapHash map[string]string // map["ns/name"]sha256 of .data
+	lastSecretHash    map[string]string // map["ns/name"]sha256 of .data
 }
 
 func NewKubernetesCollector(cfg config.Config, clientset kubernetes.Interface) (*KubernetesCollector, error) {
@@ -46,13 +55,17 @@ func NewKubernetesCollector(cfg config.Config, clientset kubernetes.Interface) (
 	}
 
 	return &KubernetesCollector{
-		clientset:        clientset,
-		kubeConfigPath:   cfg.Kubernetes.KubeConfigPath,
-		namespaces:       cfg.Kubernetes.Namespaces,
-		requireAnnot:     cfg.Kubernetes.RequireAnnotation,
-		allowedSources:   cfg.Kubernetes.AllowedSources,
-		lastProcessed:    make(map[string]int64),
-		lastProcessedSha: make(map[string]string),
+		clientset:         clientset,
+		kubeConfigPath:    cfg.Kubernetes.KubeConfigPath,
+		namespaces:        cfg.Kubernetes.Namespaces,
+		requireAnnot:      cfg.Kubernetes.RequireAnnotation,
+		allowedSources:    cfg.Kubernetes.AllowedSources,
+		watchConfigMaps:   cfg.Kubernetes.WatchConfigMaps,
+		watchSecrets:      cfg.Kubernetes.WatchSecrets,
+		lastProcessed:     make(map[string]int64),
+		lastProcessedSha:  make(map[string]string),
+		lastConfigMapHash: make(map[string]string),
+		lastSecretHash:    make(map[string]string),
 	}, nil
 }
 
@@ -197,6 +210,13 @@ func (c *KubernetesCollector) CollectAndSend(ctx context.Context, eventChan chan
 			}
 		}
 	}
+
+	if c.watchConfigMaps {
+		c.collectConfigMapChanges(ctx, eventChan, watchedNamespaces, allDeps.Items)
+	}
+	if c.watchSecrets {
+		c.collectSecretChanges(ctx, eventChan, watchedNamespaces, allDeps.Items)
+	}
 }
 func isRecentRollout(d *appsv1.Deployment) bool {
 	for _, cond := range d.Status.Conditions {
@@ -214,6 +234,224 @@ func (c *KubernetesCollector) isSourceAllowed(source string) bool {
 		}
 	}
 	return false
+}
+
+func hashConfigMapData(data map[string]string) string {
+	keys := make([]string, 0, len(data))
+	for k := range data {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	h := sha256.New()
+	for _, k := range keys {
+		h.Write([]byte(k))
+		h.Write([]byte("="))
+		h.Write([]byte(data[k]))
+		h.Write([]byte("\n"))
+	}
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+func hashSecretData(data map[string][]byte) string {
+	keys := make([]string, 0, len(data))
+	for k := range data {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	h := sha256.New()
+	for _, k := range keys {
+		h.Write([]byte(k))
+		h.Write([]byte("="))
+		h.Write(data[k])
+		h.Write([]byte("\n"))
+	}
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+func findReferencingDeployments(deps []appsv1.Deployment, name, kind string) []string {
+	var result []string
+	for _, d := range deps {
+		if referencesResource(d, name, kind) {
+			result = append(result, d.Name)
+		}
+	}
+	return result
+}
+
+func referencesResource(d appsv1.Deployment, name, kind string) bool {
+	podSpec := d.Spec.Template.Spec
+
+	// Check envFrom
+	for _, c := range podSpec.Containers {
+		for _, ef := range c.EnvFrom {
+			if kind == "ConfigMap" && ef.ConfigMapRef != nil && ef.ConfigMapRef.Name == name {
+				return true
+			}
+			if kind == "Secret" && ef.SecretRef != nil && ef.SecretRef.Name == name {
+				return true
+			}
+		}
+		// Check env[].valueFrom
+		for _, e := range c.Env {
+			if e.ValueFrom == nil {
+				continue
+			}
+			if kind == "ConfigMap" && e.ValueFrom.ConfigMapKeyRef != nil && e.ValueFrom.ConfigMapKeyRef.Name == name {
+				return true
+			}
+			if kind == "Secret" && e.ValueFrom.SecretKeyRef != nil && e.ValueFrom.SecretKeyRef.Name == name {
+				return true
+			}
+		}
+	}
+
+	// Check volumes
+	for _, v := range podSpec.Volumes {
+		if kind == "ConfigMap" && v.ConfigMap != nil && v.ConfigMap.Name == name {
+			return true
+		}
+		if kind == "Secret" && v.Secret != nil && v.Secret.SecretName == name {
+			return true
+		}
+	}
+
+	return false
+}
+
+func (c *KubernetesCollector) collectConfigMapChanges(ctx context.Context, eventChan chan<- domain.ChangeEvent, watchedNamespaces map[string]bool, deps []appsv1.Deployment) {
+	cms, err := c.clientset.CoreV1().ConfigMaps("").List(ctx, metav1.ListOptions{})
+	if err != nil {
+		fmt.Printf("Error listing configmaps: %v\n", err)
+		return
+	}
+
+	for _, cm := range cms.Items {
+		// Namespace filter
+		if len(c.namespaces) > 0 && !watchedNamespaces[cm.Namespace] {
+			continue
+		}
+
+		// Annotation filter
+		if c.requireAnnot {
+			source, exists := cm.Annotations["valiant.io/source"]
+			if !exists || !c.isSourceAllowed(source) {
+				continue
+			}
+		}
+
+		key := fmt.Sprintf("%s/%s", cm.Namespace, cm.Name)
+		hash := hashConfigMapData(cm.Data)
+
+		prevHash, seen := c.lastConfigMapHash[key]
+		c.lastConfigMapHash[key] = hash
+
+		// First-seen: store hash, skip event
+		if !seen {
+			continue
+		}
+
+		// No change
+		if prevHash == hash {
+			continue
+		}
+
+		// Data changed — emit event
+		affectedServices := findReferencingDeployments(deps, cm.Name, "ConfigMap")
+
+		dataKeys := make([]string, 0, len(cm.Data))
+		for k := range cm.Data {
+			dataKeys = append(dataKeys, k)
+		}
+		sort.Strings(dataKeys)
+
+		eventChan <- domain.ChangeEvent{
+			ID:               fmt.Sprintf("k8s-cm-%s-%s-%s", cm.Namespace, cm.Name, hash[:8]),
+			TriggerType:      "GitOps",
+			ChangeType:       "configmap_update",
+			Timestamp:        time.Now(),
+			AffectedServices: affectedServices,
+			Summary:          fmt.Sprintf("ConfigMap %s/%s data changed", cm.Namespace, cm.Name),
+			Metadata: map[string]string{
+				"namespace":                cm.Namespace,
+				"kind":                     "ConfigMap",
+				"data_keys":               strings.Join(dataKeys, ","),
+				"data_hash":               hash[:8],
+				"intent_source":           cm.Annotations["valiant.io/source"],
+				"referencing_deployments": strings.Join(affectedServices, ","),
+			},
+		}
+	}
+}
+
+func (c *KubernetesCollector) collectSecretChanges(ctx context.Context, eventChan chan<- domain.ChangeEvent, watchedNamespaces map[string]bool, deps []appsv1.Deployment) {
+	secrets, err := c.clientset.CoreV1().Secrets("").List(ctx, metav1.ListOptions{})
+	if err != nil {
+		fmt.Printf("Error listing secrets: %v\n", err)
+		return
+	}
+
+	for _, s := range secrets.Items {
+		// Skip ServiceAccountToken type secrets
+		if s.Type == corev1.SecretTypeServiceAccountToken {
+			continue
+		}
+
+		// Namespace filter
+		if len(c.namespaces) > 0 && !watchedNamespaces[s.Namespace] {
+			continue
+		}
+
+		// Annotation filter
+		if c.requireAnnot {
+			source, exists := s.Annotations["valiant.io/source"]
+			if !exists || !c.isSourceAllowed(source) {
+				continue
+			}
+		}
+
+		key := fmt.Sprintf("%s/%s", s.Namespace, s.Name)
+		hash := hashSecretData(s.Data)
+
+		prevHash, seen := c.lastSecretHash[key]
+		c.lastSecretHash[key] = hash
+
+		// First-seen: store hash, skip event
+		if !seen {
+			continue
+		}
+
+		// No change
+		if prevHash == hash {
+			continue
+		}
+
+		// Data changed — emit event
+		affectedServices := findReferencingDeployments(deps, s.Name, "Secret")
+
+		dataKeys := make([]string, 0, len(s.Data))
+		for k := range s.Data {
+			dataKeys = append(dataKeys, k)
+		}
+		sort.Strings(dataKeys)
+
+		eventChan <- domain.ChangeEvent{
+			ID:               fmt.Sprintf("k8s-secret-%s-%s-%s", s.Namespace, s.Name, hash[:8]),
+			TriggerType:      "GitOps",
+			ChangeType:       "secret_update",
+			Timestamp:        time.Now(),
+			AffectedServices: affectedServices,
+			Summary:          fmt.Sprintf("Secret %s/%s data changed", s.Namespace, s.Name),
+			Metadata: map[string]string{
+				"namespace":                s.Namespace,
+				"kind":                     "Secret",
+				"data_keys":               strings.Join(dataKeys, ","),
+				"intent_source":           s.Annotations["valiant.io/source"],
+				"referencing_deployments": strings.Join(affectedServices, ","),
+			},
+		}
+	}
 }
 
 func (c *KubernetesCollector) Name() string {

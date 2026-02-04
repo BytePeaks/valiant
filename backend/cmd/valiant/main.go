@@ -16,6 +16,7 @@ import (
 	"valiant/internal/correlator"
 	"valiant/internal/domain"
 	"valiant/internal/metrics"
+	"valiant/internal/retention"
 	"valiant/internal/storage"
 
 	_ "github.com/lib/pq"
@@ -95,6 +96,12 @@ func main() {
 	// Start Background Worker (Automatic Analysis)
 	worker := correlator.NewWorker(engine)
 	go worker.Start(ctx)
+
+	// Start Retention Worker
+	if cfg.Retention.EventTTLDur > 0 {
+		retentionWorker := retention.NewWorker(store, cfg.Retention.EventTTLDur)
+		go retentionWorker.Start(ctx, cfg.Retention.CleanupIntervalDur)
+	}
 
 	// Start Collectors
 	eventChan := make(chan domain.ChangeEvent, 100)
