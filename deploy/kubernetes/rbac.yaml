@@ -1,0 +1,52 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: valiant-watcher
+  labels:
+    app.kubernetes.io/name: valiant-watcher
+    app.kubernetes.io/part-of: valiant
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments", "replicasets"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["configmaps", "secrets"]
+    verbs: ["get", "list", "watch"]
+---
+# ClusterRoleBinding grants the backend ServiceAccount cluster-wide read access.
+# For namespace-scoped alternative, replace this with individual RoleBindings
+# in each target namespace (see comments below).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: valiant-watcher-binding
+  labels:
+    app.kubernetes.io/name: valiant-watcher-binding
+    app.kubernetes.io/part-of: valiant
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: valiant-watcher
+subjects:
+  - kind: ServiceAccount
+    name: valiant-backend
+    namespace: valiant
+
+# --- Namespace-scoped alternative ---
+# If you prefer to grant access per-namespace instead of cluster-wide,
+# delete the ClusterRoleBinding above and create a RoleBinding in each
+# namespace you want Valiant to watch:
+#
+# apiVersion: rbac.authorization.k8s.io/v1
+# kind: RoleBinding
+# metadata:
+#   name: valiant-watcher-binding
+#   namespace: <TARGET_NAMESPACE>
+# roleRef:
+#   apiGroup: rbac.authorization.k8s.io
+#   kind: ClusterRole
+#   name: valiant-watcher
+# subjects:
+#   - kind: ServiceAccount
+#     name: valiant-backend
+#     namespace: valiant

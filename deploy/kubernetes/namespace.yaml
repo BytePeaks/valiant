@@ -1,0 +1,6 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: valiant
+  labels:
+    app.kubernetes.io/part-of: valiant
