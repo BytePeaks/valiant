@@ -139,23 +139,3 @@ Analysis is triggered by user request or background worker, not run continuously
 ### PostgreSQL as Single Datastore
 
 One robust relational database for all data. Well-suited for discrete events (not time-series). Simple deployment and operations. Sufficient for single-cluster scale.
-
----
-
-## OSS vs Pro Boundaries
-
-### Open Source (Core)
-- Single Kubernetes cluster + Prometheus instance
-- Change collection: K8s deployments, ConfigMaps, Secrets, CI/CD webhooks
-- Full impact scoring and ranking engine
-- Manual + automatic (background worker) analysis
-- Full UI: timeline, service analytics, incident investigation
-- PostgreSQL storage with configurable retention
-
-### Pro (Paid)
-- Multi-environment support (multiple clusters, staging/prod)
-- Automated alerting (Slack, PagerDuty, email)
-- Noise suppression rules (ignore specific services, types, maintenance windows)
-- Saved incidents and postmortem export (Markdown)
-- RBAC / SSO (Okta, Google Workspace)
-- Dependency proximity scoring (service mesh integration)
