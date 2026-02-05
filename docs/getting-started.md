@@ -17,7 +17,7 @@ Get Valiant running locally in under 5 minutes.
 
 ---
 
-## Quick Start with Docker Compose
+## Quick Start with Docker Compose (Blind and Deaf)
 
 ```bash
 git clone https://github.com/BytePeaks/valiant.git
@@ -64,7 +64,7 @@ npm run dev
 
 ---
 
-## Kubernetes Deployment
+## Kubernetes Deployment (proper)
 
 For deploying to a Kubernetes or OpenShift cluster:
 
