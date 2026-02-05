@@ -221,6 +221,7 @@ func (c *KubernetesCollector) CollectAndSend(ctx context.Context, eventChan chan
 
 			eventChan <- domain.ChangeEvent{
 				ID:               fmt.Sprintf("k8s-%s-%s-%d", d.Namespace, d.Name, d.Generation),
+				Source:           "kubernetes",
 				TriggerType:      "GitOps",
 				ExecutionID:      fmt.Sprintf("%s-%d", d.UID, d.Generation),
 				ChangeType:       "deployment_rollout",
@@ -431,6 +432,7 @@ func (c *KubernetesCollector) collectConfigMapChanges(ctx context.Context, event
 
 		eventChan <- domain.ChangeEvent{
 			ID:               fmt.Sprintf("k8s-cm-%s-%s-%s", cm.Namespace, cm.Name, hash[:8]),
+			Source:           "kubernetes",
 			TriggerType:      "GitOps",
 			ChangeType:       "configmap_update",
 			Timestamp:        time.Now(),
@@ -529,6 +531,7 @@ func (c *KubernetesCollector) collectSecretChanges(ctx context.Context, eventCha
 
 		eventChan <- domain.ChangeEvent{
 			ID:               fmt.Sprintf("k8s-secret-%s-%s-%s", s.Namespace, s.Name, hash[:8]),
+			Source:           "kubernetes",
 			TriggerType:      "GitOps",
 			ChangeType:       "secret_update",
 			Timestamp:        time.Now(),

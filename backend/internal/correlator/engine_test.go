@@ -176,8 +176,8 @@ func TestAnalyzeImpact_LowConfidence(t *testing.T) {
 
 	analysis, _ := engine.AnalyzeImpact(context.Background(), event)
 
-	if analysis.ConfidenceScore >= 1.0 {
-		t.Errorf("expected low confidence score (< 1.0) for low RPS, got %f", analysis.ConfidenceScore)
+	if analysis.ConfidenceScore != 0.5 {
+		t.Errorf("expected confidence score 0.5 for low RPS (both baseline and impact < 1.0), got %f", analysis.ConfidenceScore)
 	}
 }
 
@@ -223,9 +223,8 @@ func TestAnalyzeImpact_RPSDrop(t *testing.T) {
 	analysis, _ := engine.AnalyzeImpact(context.Background(), event)
 
 	// RPS drop of 100% should contribute 1.0 * weightRPS (0.1) = 0.1
-	// This might be LOW impact depending on threshold (0.1 is LOW threshold)
-	if analysis.ImpactScore < 0.1 {
-		t.Errorf("expected at least 0.1 score for 100%% RPS drop, got %f", analysis.ImpactScore)
+	if analysis.ImpactScore != 0.1 {
+		t.Errorf("expected exactly 0.1 score for 100%% RPS drop, got %f", analysis.ImpactScore)
 	}
 }
 
