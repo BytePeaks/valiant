@@ -3,10 +3,20 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { ChangeEvent, EventsResponse, fetchChangeEvents, fetchServices, fetchNamespaces } from '@/lib/api';
 import Timeline from '@/components/timeline/timeline';
-import { RefreshCcw, Filter, ExternalLink, ChevronDown, ChevronUp, Layers, Search, X } from 'lucide-react';
+import { RefreshCcw, Filter, ExternalLink, ChevronDown, ChevronUp, Layers, Search, X, Zap } from 'lucide-react';
 import Link from 'next/link';
 
 const PAGE_SIZE = 10;
+
+const CHANGE_TYPES = [
+  { value: 'deployment_rollout', label: 'Deployment' },
+  { value: 'configmap_update', label: 'ConfigMap' },
+  { value: 'secret_update', label: 'Secret' },
+  { value: 'build_success', label: 'CI Build' },
+  { value: 'tag_created', label: 'Tag' },
+  { value: 'release_published', label: 'Release' },
+  { value: 'branch_merged', label: 'Merge' },
+];
 
 export default function Home() {
   const [events, setEvents] = useState<ChangeEvent[]>([]);
@@ -16,6 +26,9 @@ export default function Home() {
   const [selectedService, setSelectedService] = useState<string | null>(null);
   const [namespaces, setNamespaces] = useState<string[]>([]);
   const [selectedNamespace, setSelectedNamespace] = useState<string | null>(null);
+  const [selectedChangeType, setSelectedChangeType] = useState<string | null>(null);
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
   const [loading, setLoading] = useState(true);
   const [filtersVisible, setFiltersVisible] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
@@ -30,7 +43,15 @@ export default function Home() {
     return () => clearTimeout(timer);
   }, [searchQuery]);
 
-  const fetchEvents = useCallback((currentOffset: number, service: string | null, namespace: string | null, search: string) => {
+  const loadEvents = useCallback((
+    currentOffset: number,
+    service: string | null,
+    namespace: string | null,
+    search: string,
+    changeType: string | null,
+    from: string,
+    to: string,
+  ) => {
     // Cancel any in-flight request
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
@@ -46,6 +67,9 @@ export default function Home() {
         ...(service ? { service } : {}),
         ...(namespace ? { namespace } : {}),
         ...(search ? { search } : {}),
+        ...(changeType ? { change_type: changeType } : {}),
+        ...(from ? { from: new Date(from).toISOString() } : {}),
+        ...(to ? { to: new Date(to).toISOString() } : {}),
       },
       controller.signal
     )
@@ -76,16 +100,16 @@ export default function Home() {
 
   // Re-fetch when filters or search change
   useEffect(() => {
-    fetchEvents(0, selectedService, selectedNamespace, debouncedSearch);
-  }, [selectedService, selectedNamespace, debouncedSearch, fetchEvents]);
+    loadEvents(0, selectedService, selectedNamespace, debouncedSearch, selectedChangeType, dateFrom, dateTo);
+  }, [selectedService, selectedNamespace, debouncedSearch, selectedChangeType, dateFrom, dateTo, loadEvents]);
 
   const handleShowMore = () => {
     const nextOffset = offset + PAGE_SIZE;
-    fetchEvents(nextOffset, selectedService, selectedNamespace, debouncedSearch);
+    loadEvents(nextOffset, selectedService, selectedNamespace, debouncedSearch, selectedChangeType, dateFrom, dateTo);
   };
 
   const handleRefresh = () => {
-    fetchEvents(0, selectedService, selectedNamespace, debouncedSearch);
+    loadEvents(0, selectedService, selectedNamespace, debouncedSearch, selectedChangeType, dateFrom, dateTo);
   };
 
   const hasMore = events.length < total;
@@ -93,9 +117,18 @@ export default function Home() {
   return (
     <main className="min-h-screen bg-gray-50 p-8 md:p-24">
       <div className="max-w-4xl mx-auto">
-        <header className="mb-12">
-          <h1 className="text-4xl font-black text-gray-900 tracking-tight italic uppercase">Valiant<span className="text-blue-600">.</span></h1>
-          <p className="text-gray-500 font-medium">Change Impact Radar for Teams</p>
+        <header className="mb-12 flex justify-between items-start">
+          <div>
+            <h1 className="text-4xl font-black text-gray-900 tracking-tight italic uppercase">Valiant<span className="text-blue-600">.</span></h1>
+            <p className="text-gray-500 font-medium">Change Impact Radar for Teams</p>
+          </div>
+          <Link
+            href="/incidents"
+            className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-200 text-gray-700 text-sm font-semibold rounded-xl hover:border-blue-300 hover:text-blue-600 transition-all shadow-sm"
+          >
+            <Zap className="w-4 h-4" />
+            Investigate Incident
+          </Link>
         </header>
 
 
@@ -163,7 +196,7 @@ export default function Home() {
               </section>
 
               {/* Service Filter */}
-              <section>
+              <section className="mb-8">
                 <div className="flex items-center gap-2 mb-4 text-xs font-bold text-gray-400 uppercase tracking-widest">
                   Filter by Service
                 </div>
@@ -193,6 +226,61 @@ export default function Home() {
                         <ExternalLink className="w-3 h-3" />
                       </Link>
                     </div>
+                  ))}
+                </div>
+              </section>
+
+              {/* Date Range Filter */}
+              <section className="mb-8">
+                <div className="flex items-center gap-2 mb-4 text-xs font-bold text-gray-400 uppercase tracking-widest">
+                  Date Range
+                </div>
+                <div className="flex flex-wrap items-center gap-3">
+                  <input
+                    type="datetime-local"
+                    value={dateFrom}
+                    onChange={(e) => setDateFrom(e.target.value)}
+                    className="px-3 py-1.5 rounded-lg border border-gray-200 shadow-sm text-sm text-gray-700 focus:outline-none focus:border-blue-300 focus:ring-1 focus:ring-blue-300 transition-all"
+                  />
+                  <span className="text-xs text-gray-400 font-medium">to</span>
+                  <input
+                    type="datetime-local"
+                    value={dateTo}
+                    onChange={(e) => setDateTo(e.target.value)}
+                    className="px-3 py-1.5 rounded-lg border border-gray-200 shadow-sm text-sm text-gray-700 focus:outline-none focus:border-blue-300 focus:ring-1 focus:ring-blue-300 transition-all"
+                  />
+                  {(dateFrom || dateTo) && (
+                    <button
+                      onClick={() => { setDateFrom(''); setDateTo(''); }}
+                      className="px-3 py-1.5 rounded-full text-xs font-bold text-gray-500 hover:text-gray-700 hover:bg-gray-100 transition-colors"
+                    >
+                      <X className="w-3 h-3 inline mr-1" />
+                      Clear
+                    </button>
+                  )}
+                </div>
+              </section>
+
+              {/* Change Type Filter */}
+              <section>
+                <div className="flex items-center gap-2 mb-4 text-xs font-bold text-gray-400 uppercase tracking-widest">
+                  Filter by Change Type
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    onClick={() => setSelectedChangeType(null)}
+                    className={`px-4 py-1.5 rounded-full text-xs font-bold transition-all border ${!selectedChangeType ? 'bg-blue-600 border-blue-600 text-white' : 'bg-white border-gray-200 text-gray-600 hover:border-blue-300'}`}
+                  >
+                    All Types
+                  </button>
+                  {CHANGE_TYPES.map(ct => (
+                    <button
+                      key={ct.value}
+                      onClick={() => setSelectedChangeType(ct.value === selectedChangeType ? null : ct.value)}
+                      className={`px-4 py-1.5 rounded-full text-xs font-bold transition-all border ${selectedChangeType === ct.value ? 'bg-blue-600 border-blue-600 text-white' : 'bg-white border-gray-200 text-gray-600 hover:border-blue-300'}`}
+                    >
+                      {ct.label}
+                    </button>
                   ))}
                 </div>
               </section>

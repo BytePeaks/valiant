@@ -155,6 +155,107 @@ func (e *Engine) AnalyzeImpact(ctx context.Context, event domain.ChangeEvent) (d
 	return analysis, nil
 }
 
+// changeTypeWeights maps change types to risk weights.
+// Full image deployments carry the highest risk; config changes are lower.
+var changeTypeWeights = map[string]float64{
+	"deployment_rollout": 1.0,
+	"build_success":      0.8,
+	"tag_created":         0.7,
+	"release_published":   0.7,
+	"branch_merged":       0.6,
+	"configmap_update":    0.5,
+	"secret_update":       0.5,
+}
+
+// RankChanges ranks concurrent changes for a service within a time range
+// by their likelihood of causing degradation.
+func (e *Engine) RankChanges(ctx context.Context, service string, from, to time.Time) ([]domain.RankedChange, error) {
+	events, _, err := e.storage.GetChangeEvents(ctx, map[string]interface{}{
+		"services_any_of": []string{service},
+		"from_timestamp":  from,
+		"to_timestamp":    to,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch events for ranking: %w", err)
+	}
+
+	if len(events) == 0 {
+		return []domain.RankedChange{}, nil
+	}
+
+	// Midpoint of the query window — changes closer to this are more suspicious
+	midpoint := from.Add(to.Sub(from) / 2)
+	maxDistance := to.Sub(from) / 2
+	if maxDistance == 0 {
+		maxDistance = time.Minute // avoid division by zero
+	}
+
+	var ranked []domain.RankedChange
+	for _, event := range events {
+		// Get or compute the impact analysis
+		analysis, err := e.AnalyzeImpact(ctx, event)
+		if err == ErrImpactWindowNotClosed {
+			// Include pending events with zero impact score
+			analysis.ImpactLevel = "PENDING"
+		} else if err != nil {
+			continue // skip events that fail analysis
+		}
+
+		// Temporal proximity: 1.0 = right at midpoint, 0.0 = at edge of window
+		distance := math.Abs(float64(event.Timestamp.Sub(midpoint)))
+		temporal := 1.0 - math.Min(distance/float64(maxDistance), 1.0)
+
+		// Change type weight
+		typeWeight := 0.5 // default for unknown types
+		if w, ok := changeTypeWeights[event.ChangeType]; ok {
+			typeWeight = w
+		}
+
+		// Service scope: 1.0 if the service is directly affected, 0.5 otherwise
+		scope := 0.5
+		for _, s := range event.AffectedServices {
+			if s == service {
+				scope = 1.0
+				break
+			}
+		}
+
+		// Composite likelihood: weighted combination of all factors
+		// impact_score (0.5) + temporal (0.2) + change_type (0.2) + scope (0.1)
+		likelihood := (analysis.ImpactScore * 0.5) +
+			(temporal * 0.2) +
+			(typeWeight * 0.2) +
+			(scope * 0.1)
+
+		ranked = append(ranked, domain.RankedChange{
+			Analysis:          analysis,
+			LikelihoodScore:   likelihood,
+			TemporalProximity: temporal,
+			ChangeTypeWeight:  typeWeight,
+			ServiceScope:      scope,
+		})
+	}
+
+	// Sort by likelihood descending
+	sortRankedChanges(ranked)
+
+	// Assign ranks
+	for i := range ranked {
+		ranked[i].Rank = i + 1
+	}
+
+	return ranked, nil
+}
+
+// sortRankedChanges sorts ranked changes by likelihood score descending.
+func sortRankedChanges(ranked []domain.RankedChange) {
+	for i := 1; i < len(ranked); i++ {
+		for j := i; j > 0 && ranked[j].LikelihoodScore > ranked[j-1].LikelihoodScore; j-- {
+			ranked[j], ranked[j-1] = ranked[j-1], ranked[j]
+		}
+	}
+}
+
 func calculateDeltas(baseline, impact domain.MetricValues) domain.MetricValues {
 	deltas := domain.MetricValues{
 		ErrorRate:  calculateDelta(baseline.ErrorRate, impact.ErrorRate),

@@ -5,7 +5,7 @@ import { timeAgo, getImpactColor } from '../../lib/utils';
 import type { ChangeEvent, ImpactAnalysis, TimelineEventProps, MetricInfo } from '../../lib/api';
 import { fetchAvailableMetrics, analyzeImpact, fetchServicePreferences, saveServicePreferences } from '../../lib/api';
 import { MetricDelta } from './metric-delta';
-import { METRIC_CONFIG, CORE_METRICS } from './constants.tsx';
+import { METRIC_CONFIG, CORE_METRICS } from './constants';
 import { getIcon } from '../icons';
 
 export default function TimelineEvent({ event }: TimelineEventProps) {
@@ -16,9 +16,8 @@ export default function TimelineEvent({ event }: TimelineEventProps) {
   const [selectedMetrics, setSelectedMetrics] = useState<Set<string>>(new Set(CORE_METRICS));
   const [selectedService, setSelectedService] = useState<string | null>(null);
 
-  // Analysis is available only after 35 minutes (30m impact window + 5m buffer)
-  const analysisTime = new Date(event.timestamp).getTime() + 35 * 60 * 1000;
-  const isPending = Date.now() < analysisTime;
+  const isPending = event.analysis_status === 'pending';
+  const isCompleted = event.analysis_status === 'completed';
 
   useEffect(() => {
     if (event.affected_services.length > 0) {
@@ -135,13 +134,23 @@ export default function TimelineEvent({ event }: TimelineEventProps) {
             </div>
           )}
 
-          {!analysis && !loading && !isPending && (
+          {!analysis && !loading && !isPending && !isCompleted && (
             <button
               onClick={handleAnalyze}
               className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white text-sm font-bold rounded-xl hover:bg-blue-700 transition-all shadow-lg shadow-blue-200"
             >
               <Zap className="w-4 h-4 fill-current" />
               Analyze
+            </button>
+          )}
+
+          {!analysis && !loading && isCompleted && (
+            <button
+              onClick={handleAnalyze}
+              className="flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white text-sm font-bold rounded-xl hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-200"
+            >
+              <ShieldCheck className="w-4 h-4" />
+              Analyzed
             </button>
           )}
 
@@ -220,8 +229,15 @@ export default function TimelineEvent({ event }: TimelineEventProps) {
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 mb-6">
               {metricsToRender.map(metricName => {
                 const metricInfo = availableMetrics.find(m => m.name === metricName);
-                const allDeltas = { ...analysis.deltas, ...analysis.deltas.additional_metrics };
-                const deltaValue = allDeltas[metricName as keyof typeof allDeltas] || 0;
+                const allDeltas: Record<string, number> = {
+                  error_rate: analysis.deltas.error_rate,
+                  latency_p95_ms: analysis.deltas.latency_p95_ms,
+                  rps: analysis.deltas.rps,
+                  cpu: analysis.deltas.cpu,
+                  memory: analysis.deltas.memory,
+                  ...analysis.deltas.additional_metrics,
+                };
+                const deltaValue = allDeltas[metricName] || 0;
                 const config = METRIC_CONFIG[metricName] || { label: metricName, description: `Custom metric: ${metricName}` };
 
                 return (

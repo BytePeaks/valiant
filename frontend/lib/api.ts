@@ -52,6 +52,23 @@ export interface EventsResponse {
   offset: number;
 }
 
+export interface RankedChange {
+  analysis: ImpactAnalysis;
+  rank: number;
+  likelihood_score: number;
+  temporal_proximity: number;
+  change_type_weight: number;
+  service_scope: number;
+}
+
+export interface RankingsResponse {
+  service: string;
+  from: string;
+  to: string;
+  ranked: RankedChange[];
+  total: number;
+}
+
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080/api/v1';
 
 export async function fetchChangeEvents(
@@ -150,4 +167,17 @@ export async function saveServicePreferences(serviceName: string, visibleMetrics
   if (!res.ok) {
     throw new Error('Failed to save service preferences');
   }
+}
+
+export async function fetchRankings(
+  service: string,
+  from: string,
+  to: string
+): Promise<RankingsResponse> {
+  const params = new URLSearchParams({ service, from, to });
+  const res = await fetch(`${API_BASE_URL}/rankings?${params}`);
+  if (!res.ok) {
+    throw new Error('Failed to fetch rankings');
+  }
+  return res.json();
 }

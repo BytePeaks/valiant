@@ -42,6 +42,7 @@ func (router *Router) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/analyze", router.handleAnalysis)
 	mux.HandleFunc("/api/v1/metrics", router.handleMetrics)
 	mux.HandleFunc("/api/v1/namespaces", router.handleNamespaces)
+	mux.HandleFunc("/api/v1/rankings", router.handleRankings)
 
 	return corsMiddleware(mux)
 }
@@ -316,4 +317,50 @@ func (router *Router) handleNamespaces(w http.ResponseWriter, r *http.Request) {
 	}
 	
 	json.NewEncoder(w).Encode(uniqueNamespaces)
+}
+
+func (router *Router) handleRankings(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	q := r.URL.Query()
+	service := q.Get("service")
+	if service == "" {
+		http.Error(w, "service parameter is required", http.StatusBadRequest)
+		return
+	}
+
+	fromStr := q.Get("from")
+	toStr := q.Get("to")
+	if fromStr == "" || toStr == "" {
+		http.Error(w, "from and to parameters are required (RFC3339 format)", http.StatusBadRequest)
+		return
+	}
+
+	from, err := time.Parse(time.RFC3339, fromStr)
+	if err != nil {
+		http.Error(w, "invalid from parameter: expected RFC3339 format", http.StatusBadRequest)
+		return
+	}
+	to, err := time.Parse(time.RFC3339, toStr)
+	if err != nil {
+		http.Error(w, "invalid to parameter: expected RFC3339 format", http.StatusBadRequest)
+		return
+	}
+
+	ranked, err := router.correlator.RankChanges(r.Context(), service, from, to)
+	if err != nil {
+		http.Error(w, "Ranking failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"service": service,
+		"from":    from,
+		"to":      to,
+		"ranked":  ranked,
+		"total":   len(ranked),
+	})
 }

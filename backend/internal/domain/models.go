@@ -42,3 +42,13 @@ type MetricInfo struct {
 	Name string `json:"name"`
 	Icon string `json:"icon,omitempty"`
 }
+
+// RankedChange represents a change event ranked by likelihood of causing degradation.
+type RankedChange struct {
+	Analysis          ImpactAnalysis `json:"analysis"`
+	Rank              int            `json:"rank"`
+	LikelihoodScore   float64        `json:"likelihood_score"`   // 0.0 to 1.0, composite ranking score
+	TemporalProximity float64        `json:"temporal_proximity"` // 0.0 to 1.0, how close to the query window
+	ChangeTypeWeight  float64        `json:"change_type_weight"` // 0.0 to 1.0, risk weight by change type
+	ServiceScope      float64        `json:"service_scope"`      // 0.0 to 1.0, direct vs indirect
+}

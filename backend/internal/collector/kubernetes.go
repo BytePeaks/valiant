@@ -13,6 +13,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -86,19 +87,53 @@ func (c *KubernetesCollector) Start(ctx context.Context, eventChan chan<- domain
 	}
 }
 
-func (c *KubernetesCollector) CollectAndSend(ctx context.Context, eventChan chan<- domain.ChangeEvent) {
-	allDeps, err := c.clientset.AppsV1().Deployments("").List(ctx, metav1.ListOptions{})
-	if err != nil {
-		fmt.Printf("Error listing deployments: %v\n", err)
-		return
-	}
-
+// listDeployments lists deployments across the configured namespaces, handling permission errors gracefully.
+func (c *KubernetesCollector) listDeployments(ctx context.Context) ([]appsv1.Deployment, map[string]bool) {
 	watchedNamespaces := make(map[string]bool)
 	for _, ns := range c.namespaces {
 		watchedNamespaces[ns] = true
 	}
 
-	for _, d := range allDeps.Items {
+	if len(c.namespaces) == 0 {
+		// Cluster-wide listing
+		allDeps, err := c.clientset.AppsV1().Deployments("").List(ctx, metav1.ListOptions{})
+		if err != nil {
+			if k8serrors.IsForbidden(err) {
+				fmt.Printf("[valiant] RBAC error: cannot list Deployments cluster-wide. "+
+					"Apply deploy/kubernetes/rbac.yaml or configure specific namespaces in config.yaml. Error: %v\n", err)
+			} else {
+				fmt.Printf("Error listing deployments: %v\n", err)
+			}
+			return nil, watchedNamespaces
+		}
+		return allDeps.Items, watchedNamespaces
+	}
+
+	// Per-namespace listing for graceful permission handling
+	var allItems []appsv1.Deployment
+	for _, ns := range c.namespaces {
+		deps, err := c.clientset.AppsV1().Deployments(ns).List(ctx, metav1.ListOptions{})
+		if err != nil {
+			if k8serrors.IsForbidden(err) {
+				fmt.Printf("[valiant] RBAC error: cannot list Deployments in namespace %q. "+
+					"Apply deploy/kubernetes/rbac.yaml to enable visibility for this namespace.\n", ns)
+			} else {
+				fmt.Printf("Error listing deployments in namespace %s: %v\n", ns, err)
+			}
+			continue
+		}
+		allItems = append(allItems, deps.Items...)
+	}
+	return allItems, watchedNamespaces
+}
+
+func (c *KubernetesCollector) CollectAndSend(ctx context.Context, eventChan chan<- domain.ChangeEvent) {
+	allDepItems, watchedNamespaces := c.listDeployments(ctx)
+	if allDepItems == nil {
+		allDepItems = []appsv1.Deployment{}
+	}
+
+	for _, d := range allDepItems {
 		key := fmt.Sprintf("%s/%s", d.Namespace, d.Name)
 
 		// Namespace Filter
@@ -212,10 +247,10 @@ func (c *KubernetesCollector) CollectAndSend(ctx context.Context, eventChan chan
 	}
 
 	if c.watchConfigMaps {
-		c.collectConfigMapChanges(ctx, eventChan, watchedNamespaces, allDeps.Items)
+		c.collectConfigMapChanges(ctx, eventChan, watchedNamespaces, allDepItems)
 	}
 	if c.watchSecrets {
-		c.collectSecretChanges(ctx, eventChan, watchedNamespaces, allDeps.Items)
+		c.collectSecretChanges(ctx, eventChan, watchedNamespaces, allDepItems)
 	}
 }
 func isRecentRollout(d *appsv1.Deployment) bool {
@@ -320,14 +355,42 @@ func referencesResource(d appsv1.Deployment, name, kind string) bool {
 	return false
 }
 
-func (c *KubernetesCollector) collectConfigMapChanges(ctx context.Context, eventChan chan<- domain.ChangeEvent, watchedNamespaces map[string]bool, deps []appsv1.Deployment) {
-	cms, err := c.clientset.CoreV1().ConfigMaps("").List(ctx, metav1.ListOptions{})
-	if err != nil {
-		fmt.Printf("Error listing configmaps: %v\n", err)
-		return
+func (c *KubernetesCollector) listConfigMaps(ctx context.Context, watchedNamespaces map[string]bool) []corev1.ConfigMap {
+	if len(c.namespaces) == 0 {
+		cms, err := c.clientset.CoreV1().ConfigMaps("").List(ctx, metav1.ListOptions{})
+		if err != nil {
+			if k8serrors.IsForbidden(err) {
+				fmt.Printf("[valiant] RBAC error: cannot list ConfigMaps cluster-wide. "+
+					"Apply deploy/kubernetes/rbac.yaml or configure specific namespaces.\n")
+			} else {
+				fmt.Printf("Error listing configmaps: %v\n", err)
+			}
+			return nil
+		}
+		return cms.Items
 	}
 
-	for _, cm := range cms.Items {
+	var items []corev1.ConfigMap
+	for _, ns := range c.namespaces {
+		cms, err := c.clientset.CoreV1().ConfigMaps(ns).List(ctx, metav1.ListOptions{})
+		if err != nil {
+			if k8serrors.IsForbidden(err) {
+				fmt.Printf("[valiant] RBAC error: cannot list ConfigMaps in namespace %q. "+
+					"Apply deploy/kubernetes/rbac.yaml to enable visibility for this namespace.\n", ns)
+			} else {
+				fmt.Printf("Error listing configmaps in namespace %s: %v\n", ns, err)
+			}
+			continue
+		}
+		items = append(items, cms.Items...)
+	}
+	return items
+}
+
+func (c *KubernetesCollector) collectConfigMapChanges(ctx context.Context, eventChan chan<- domain.ChangeEvent, watchedNamespaces map[string]bool, deps []appsv1.Deployment) {
+	cmItems := c.listConfigMaps(ctx, watchedNamespaces)
+
+	for _, cm := range cmItems {
 		// Namespace filter
 		if len(c.namespaces) > 0 && !watchedNamespaces[cm.Namespace] {
 			continue
@@ -385,14 +448,42 @@ func (c *KubernetesCollector) collectConfigMapChanges(ctx context.Context, event
 	}
 }
 
-func (c *KubernetesCollector) collectSecretChanges(ctx context.Context, eventChan chan<- domain.ChangeEvent, watchedNamespaces map[string]bool, deps []appsv1.Deployment) {
-	secrets, err := c.clientset.CoreV1().Secrets("").List(ctx, metav1.ListOptions{})
-	if err != nil {
-		fmt.Printf("Error listing secrets: %v\n", err)
-		return
+func (c *KubernetesCollector) listSecrets(ctx context.Context, watchedNamespaces map[string]bool) []corev1.Secret {
+	if len(c.namespaces) == 0 {
+		secrets, err := c.clientset.CoreV1().Secrets("").List(ctx, metav1.ListOptions{})
+		if err != nil {
+			if k8serrors.IsForbidden(err) {
+				fmt.Printf("[valiant] RBAC error: cannot list Secrets cluster-wide. "+
+					"Apply deploy/kubernetes/rbac.yaml or configure specific namespaces.\n")
+			} else {
+				fmt.Printf("Error listing secrets: %v\n", err)
+			}
+			return nil
+		}
+		return secrets.Items
 	}
 
-	for _, s := range secrets.Items {
+	var items []corev1.Secret
+	for _, ns := range c.namespaces {
+		secrets, err := c.clientset.CoreV1().Secrets(ns).List(ctx, metav1.ListOptions{})
+		if err != nil {
+			if k8serrors.IsForbidden(err) {
+				fmt.Printf("[valiant] RBAC error: cannot list Secrets in namespace %q. "+
+					"Apply deploy/kubernetes/rbac.yaml to enable visibility for this namespace.\n", ns)
+			} else {
+				fmt.Printf("Error listing secrets in namespace %s: %v\n", ns, err)
+			}
+			continue
+		}
+		items = append(items, secrets.Items...)
+	}
+	return items
+}
+
+func (c *KubernetesCollector) collectSecretChanges(ctx context.Context, eventChan chan<- domain.ChangeEvent, watchedNamespaces map[string]bool, deps []appsv1.Deployment) {
+	secretItems := c.listSecrets(ctx, watchedNamespaces)
+
+	for _, s := range secretItems {
 		// Skip ServiceAccountToken type secrets
 		if s.Type == corev1.SecretTypeServiceAccountToken {
 			continue

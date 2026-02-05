@@ -424,6 +424,188 @@ func TestAnalyzeImpact_IntentExecutionLinking(t *testing.T) {
 	})
 }
 
+func TestRankChanges_Empty(t *testing.T) {
+	cfg := &config.Config{}
+	store := &MockStorage{changeEvents: []domain.ChangeEvent{}}
+	metrics := &ControllableMetrics{}
+	engine := correlator.NewEngine(store, metrics, cfg)
+
+	ranked, err := engine.RankChanges(context.Background(), "api", time.Now().Add(-1*time.Hour), time.Now())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(ranked) != 0 {
+		t.Errorf("expected 0 ranked changes, got %d", len(ranked))
+	}
+}
+
+func TestRankChanges_SingleEvent(t *testing.T) {
+	cfg := &config.Config{}
+	eventTime := time.Now().Add(-1 * time.Hour)
+
+	store := &MockStorage{
+		changeEvents: []domain.ChangeEvent{
+			{
+				ID:               "evt-1",
+				ChangeType:       "deployment_rollout",
+				Timestamp:        eventTime,
+				AffectedServices: []string{"api"},
+			},
+		},
+	}
+
+	metrics := &ControllableMetrics{
+		Calls: []domain.MetricValues{
+			{RPS: 100, ErrorRate: 0.01},
+			{RPS: 100, ErrorRate: 0.05},
+		},
+	}
+
+	engine := correlator.NewEngine(store, metrics, cfg)
+	ranked, err := engine.RankChanges(context.Background(), "api", eventTime.Add(-30*time.Minute), eventTime.Add(30*time.Minute))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(ranked) != 1 {
+		t.Fatalf("expected 1 ranked change, got %d", len(ranked))
+	}
+	if ranked[0].Rank != 1 {
+		t.Errorf("expected rank 1, got %d", ranked[0].Rank)
+	}
+	if ranked[0].LikelihoodScore <= 0 {
+		t.Error("expected positive likelihood score")
+	}
+	if ranked[0].ChangeTypeWeight != 1.0 {
+		t.Errorf("expected change_type_weight 1.0 for deployment_rollout, got %f", ranked[0].ChangeTypeWeight)
+	}
+	if ranked[0].ServiceScope != 1.0 {
+		t.Errorf("expected service_scope 1.0 for direct service, got %f", ranked[0].ServiceScope)
+	}
+}
+
+func TestRankChanges_SortsByLikelihood(t *testing.T) {
+	cfg := &config.Config{}
+	baseTime := time.Now().Add(-2 * time.Hour)
+
+	store := &MockStorage{
+		changeEvents: []domain.ChangeEvent{
+			{
+				ID:               "evt-config",
+				ChangeType:       "configmap_update",
+				Timestamp:        baseTime,
+				AffectedServices: []string{"api"},
+			},
+			{
+				ID:               "evt-deploy",
+				ChangeType:       "deployment_rollout",
+				Timestamp:        baseTime.Add(5 * time.Minute),
+				AffectedServices: []string{"api"},
+			},
+		},
+	}
+
+	// Both events get the same metric results (high impact)
+	metrics := &ControllableMetrics{
+		Calls: []domain.MetricValues{
+			{RPS: 100, ErrorRate: 0.01}, // baseline for evt-config
+			{RPS: 50, ErrorRate: 0.10},  // impact for evt-config
+			{RPS: 100, ErrorRate: 0.01}, // baseline for evt-deploy
+			{RPS: 50, ErrorRate: 0.10},  // impact for evt-deploy
+		},
+	}
+
+	engine := correlator.NewEngine(store, metrics, cfg)
+	ranked, err := engine.RankChanges(context.Background(), "api", baseTime.Add(-10*time.Minute), baseTime.Add(20*time.Minute))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(ranked) != 2 {
+		t.Fatalf("expected 2 ranked changes, got %d", len(ranked))
+	}
+
+	// deployment_rollout has higher change_type_weight (1.0) than configmap_update (0.5)
+	// With similar impact scores, deployment should rank higher
+	if ranked[0].Rank != 1 || ranked[1].Rank != 2 {
+		t.Error("expected sequential ranks 1, 2")
+	}
+
+	if ranked[0].LikelihoodScore < ranked[1].LikelihoodScore {
+		t.Error("expected ranked[0] to have higher likelihood than ranked[1]")
+	}
+}
+
+func TestRankChanges_IndirectServiceScope(t *testing.T) {
+	cfg := &config.Config{}
+	eventTime := time.Now().Add(-2 * time.Hour)
+
+	store := &MockStorage{
+		changeEvents: []domain.ChangeEvent{
+			{
+				ID:               "evt-indirect",
+				ChangeType:       "deployment_rollout",
+				Timestamp:        eventTime,
+				AffectedServices: []string{"database"}, // not the queried service
+			},
+		},
+	}
+
+	metrics := &ControllableMetrics{
+		Calls: []domain.MetricValues{
+			{RPS: 100}, {RPS: 100},
+		},
+	}
+
+	engine := correlator.NewEngine(store, metrics, cfg)
+	ranked, err := engine.RankChanges(context.Background(), "api", eventTime.Add(-30*time.Minute), eventTime.Add(30*time.Minute))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(ranked) != 1 {
+		t.Fatalf("expected 1 ranked change, got %d", len(ranked))
+	}
+
+	if ranked[0].ServiceScope != 0.5 {
+		t.Errorf("expected service_scope 0.5 for indirect service, got %f", ranked[0].ServiceScope)
+	}
+}
+
+func TestRankChanges_PendingEvent(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Analysis.ImpactDur = 30 * time.Minute
+
+	// Event happened just now — impact window still open
+	eventTime := time.Now()
+	store := &MockStorage{
+		changeEvents: []domain.ChangeEvent{
+			{
+				ID:               "evt-pending",
+				ChangeType:       "deployment_rollout",
+				Timestamp:        eventTime,
+				AffectedServices: []string{"api"},
+			},
+		},
+	}
+
+	metrics := &ControllableMetrics{}
+	engine := correlator.NewEngine(store, metrics, cfg)
+
+	ranked, err := engine.RankChanges(context.Background(), "api", eventTime.Add(-10*time.Minute), eventTime.Add(10*time.Minute))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(ranked) != 1 {
+		t.Fatalf("expected 1 ranked change (pending), got %d", len(ranked))
+	}
+
+	if ranked[0].Analysis.ImpactLevel != "PENDING" {
+		t.Errorf("expected PENDING impact level, got %s", ranked[0].Analysis.ImpactLevel)
+	}
+}
+
 func TestAnalyzeImpact_AdditionalMetrics(t *testing.T) {
 	// Setup config with a custom metric set
 	cfg := &config.Config{}
