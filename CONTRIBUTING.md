@@ -7,10 +7,7 @@ Thanks for your interest in contributing to Valiant! This guide will help you ge
 ### Prerequisites
 
 Before you begin, make sure you have the following installed:
-- Go 1.20 or higher
-- Node.js 18 or higher
 - Docker and Docker Compose
-- PostgreSQL 12+ (or use Docker)
 - Git
 
 ### Setting Up Your Development Environment
@@ -50,7 +47,7 @@ Before you begin, make sure you have the following installed:
    ```
 
 5. **Verify everything works**
-   - Backend health check: `curl http://localhost:8080/healthz`
+   - Backend health check: `curl http://localhost:8080/health`
    - Frontend UI: Open `http://localhost:3000` in your browser
 
 ## Running Tests
