@@ -135,6 +135,22 @@ export async function fetchAvailableMetrics(): Promise<MetricInfo[]> {
   return data || [];
 }
 
+export interface CustomMetricInfo {
+  name: string;
+  query: string;
+  icon?: string;
+  description?: string;
+}
+
+export async function fetchCustomMetrics(): Promise<CustomMetricInfo[]> {
+  const res = await fetch(`${API_BASE_URL}/metrics/custom`);
+  if (!res.ok) {
+    throw new Error('Failed to fetch custom metrics');
+  }
+  const data = await res.json();
+  return data || [];
+}
+
 export async function analyzeImpact(eventId: string): Promise<ImpactAnalysis> {
   const res = await fetch(`${API_BASE_URL}/analyze`, {
     method: 'POST',

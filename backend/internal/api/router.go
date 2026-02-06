@@ -41,6 +41,7 @@ func (router *Router) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/services/", router.handleServicePreferences)
 	mux.HandleFunc("/api/v1/analyze", router.handleAnalysis)
 	mux.HandleFunc("/api/v1/metrics", router.handleMetrics)
+	mux.HandleFunc("/api/v1/metrics/custom", router.handleCustomMetrics)
 	mux.HandleFunc("/api/v1/namespaces", router.handleNamespaces)
 	mux.HandleFunc("/api/v1/rankings", router.handleRankings)
 
@@ -70,6 +71,15 @@ func (router *Router) handleMetrics(w http.ResponseWriter, r *http.Request) {
 
 	metricInfo := router.metrics.GetAvailableMetrics()
 	json.NewEncoder(w).Encode(metricInfo)
+}
+
+func (router *Router) handleCustomMetrics(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	json.NewEncoder(w).Encode(router.config.Prometheus.AdditionalMetrics)
 }
 
 func (router *Router) handleServicePreferences(w http.ResponseWriter, r *http.Request) {

@@ -1,12 +1,37 @@
 'use client';
 
 import { useEffect, useState, useCallback, useRef } from 'react';
-import { ChangeEvent, EventsResponse, fetchChangeEvents, fetchServices, fetchNamespaces } from '@/lib/api';
+import { ChangeEvent, EventsResponse, fetchChangeEvents, fetchServices, fetchNamespaces, CustomMetricInfo, fetchCustomMetrics } from '@/lib/api'; // Added CustomMetricInfo, fetchCustomMetrics
 import Timeline from '@/components/timeline/timeline';
-import { RefreshCcw, Filter, ExternalLink, ChevronDown, ChevronUp, Layers, Search, X, Zap } from 'lucide-react';
+import { RefreshCcw, Filter, ExternalLink, ChevronDown, ChevronUp, Layers, Search, X, Zap, Info } from 'lucide-react'; // Added Info
 import Link from 'next/link';
+import PromQLModal, { MetricInfo } from '@/components/promql-modal'; // Added PromQLModal, MetricInfo
 
 const PAGE_SIZE = 10;
+
+// Metric definitions for the PromQL Modal
+const METRIC_DEFINITIONS = [
+  {
+    name: "Service Request Latency (P99)",
+    description: "P99 latency of HTTP requests to a service. Replace 'your_service' with the actual service name.",
+    promql: "histogram_quantile(0.99, sum by (le, service_name) (rate(http_request_duration_seconds_bucket{job='valiant', service_name='your_service'}[5m])))"
+  },
+  {
+    name: "Service Error Rate",
+    description: "Rate of HTTP errors (status 5xx) for a service. Replace 'your_service' with the actual service name.",
+    promql: "sum by (service_name) (rate(http_requests_total{job='valiant', service_name='your_service', status_code=~'5xx'}[5m])) / sum by (service_name) (rate(http_requests_total{job='valiant', service_name='your_service'}[5m]))"
+  },
+  {
+    name: "Node CPU Utilization",
+    description: "Average CPU utilization across all cores on a node.",
+    promql: "1 - avg by (instance) (rate(node_cpu_seconds_total{mode='idle'}[5m]))"
+  },
+  {
+    name: "Node Memory Usage",
+    description: "Percentage of memory used on a node.",
+    promql: "(node_memory_MemTotal_bytes - node_memory_MemFree_bytes) / node_memory_MemTotal_bytes * 100"
+  }
+];
 
 const CHANGE_TYPES = [
   { value: 'deployment_rollout', label: 'Deployment' },
@@ -34,6 +59,9 @@ export default function Home() {
   const [searchQuery, setSearchQuery] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const abortControllerRef = useRef<AbortController | null>(null);
+  const [isPromQLModalOpen, setIsPromQLModalOpen] = useState(false); // New state for modal
+  const [dynamicCustomMetrics, setDynamicCustomMetrics] = useState<MetricInfo[]>([]); // New state for dynamic custom metrics
+  const [loadingCustomMetrics, setLoadingCustomMetrics] = useState(true); // New state for loading custom metrics
 
   // Debounce search input
   useEffect(() => {
@@ -42,6 +70,28 @@ export default function Home() {
     }, 300);
     return () => clearTimeout(timer);
   }, [searchQuery]);
+
+  // Fetch custom metrics on component mount
+  useEffect(() => {
+    const loadCustomMetrics = async () => {
+      try {
+        setLoadingCustomMetrics(true);
+        const data = await fetchCustomMetrics();
+        // Enrich data with a description for the modal, as it's not provided by the backend
+        const enrichedData = data.map(metric => ({
+            ...metric,
+            description: `Custom metric: ${metric.name}`
+        }));
+        setDynamicCustomMetrics(enrichedData);
+      } catch (error) {
+        console.error("Failed to fetch custom metrics:", error);
+        setDynamicCustomMetrics([]); // Ensure it's an empty array on error
+      } finally {
+        setLoadingCustomMetrics(false);
+      }
+    };
+    loadCustomMetrics();
+  }, []);
 
   const loadEvents = useCallback((
     currentOffset: number,
@@ -122,13 +172,22 @@ export default function Home() {
             <h1 className="text-4xl font-black text-gray-900 tracking-tight italic uppercase">Valiant<span className="text-blue-600">.</span></h1>
             <p className="text-gray-500 font-medium">Change Impact Radar for Teams</p>
           </div>
-          <Link
-            href="/incidents"
-            className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-200 text-gray-700 text-sm font-semibold rounded-xl hover:border-blue-300 hover:text-blue-600 transition-all shadow-sm"
-          >
-            <Zap className="w-4 h-4" />
-            Investigate Incident
-          </Link>
+          <div className="flex items-center gap-4">
+            <Link
+              href="/incidents"
+              className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-200 text-gray-700 text-sm font-semibold rounded-xl hover:border-blue-300 hover:text-blue-600 transition-all shadow-sm"
+            >
+              <Zap className="w-4 h-4" />
+              Investigate Incident
+            </Link>
+            <button
+              onClick={() => setIsPromQLModalOpen(true)}
+              className="w-8 h-8 rounded-full flex items-center justify-center bg-blue-100 text-blue-600 hover:bg-blue-200 transition-colors shrink-0"
+              title="View Prometheus Metrics"
+            >
+              <Info className="w-4 h-4" />
+            </button>
+          </div>
         </header>
 
 
@@ -343,6 +402,13 @@ export default function Home() {
           )}
         </section>
       </div>
+      {/* PromQL Metrics Modal */}
+              <PromQLModal
+                  isOpen={isPromQLModalOpen}
+                  onClose={() => setIsPromQLModalOpen(false)}
+                  metrics={METRIC_DEFINITIONS}
+                  customMetrics={dynamicCustomMetrics}
+              />
     </main>
   );
 }

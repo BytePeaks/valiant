@@ -10,9 +10,9 @@ import (
 )
 
 type PrometheusMetric struct {
-	Name  string `yaml:"name"`
-	Query string `yaml:"query"`
-	Icon  string `yaml:"icon,omitempty"`
+	Name  string `yaml:"name" json:"name"`
+	Query string `yaml:"query" json:"query"`
+	Icon  string `yaml:"icon,omitempty" json:"icon,omitempty"`
 }
 
 type Config struct {
