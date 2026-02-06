@@ -1,0 +1,19 @@
+# Frontend
+frontend/node_modules
+frontend/.next
+
+# Docker
+docker-compose.yml
+Dockerfile
+Dockerfile.release
+
+# Git
+.git
+.gitignore
+
+# IDE
+.vscode
+.idea
+
+# Build artifacts
+backend/main

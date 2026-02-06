@@ -21,8 +21,9 @@ type MetricValues struct {
 	ErrorRate        float64 `json:"error_rate"`
 	LatencyP95       float64 `json:"latency_p95_ms"`
 	RPS              float64 `json:"rps"`
-	CPUSaturation    float64 `json:"cpu_saturation_percent"`
-	MemorySaturation float64 `json:"memory_saturation_percent"`
+	CPU    float64 `json:"cpu"`
+	Memory float64 `json:"memory"`
+	AdditionalMetrics map[string]float64 `json:"additional_metrics,omitempty"` // New field for user-defined metrics
 }
 
 // ImpactAnalysis represents the full analysis of a single change event.
@@ -35,4 +36,19 @@ type ImpactAnalysis struct {
 	ImpactScore      float64      `json:"impact_score"`      // 0.0 to 1.0
 	ImpactLevel      string       `json:"impact_level"`      // "NONE", "LOW", "MEDIUM", "HIGH"
 	ConfidenceScore  float64      `json:"confidence_score"` // 0.0 to 1.0
+}
+
+type MetricInfo struct {
+	Name string `json:"name"`
+	Icon string `json:"icon,omitempty"`
+}
+
+// RankedChange represents a change event ranked by likelihood of causing degradation.
+type RankedChange struct {
+	Analysis          ImpactAnalysis `json:"analysis"`
+	Rank              int            `json:"rank"`
+	LikelihoodScore   float64        `json:"likelihood_score"`   // 0.0 to 1.0, composite ranking score
+	TemporalProximity float64        `json:"temporal_proximity"` // 0.0 to 1.0, how close to the query window
+	ChangeTypeWeight  float64        `json:"change_type_weight"` // 0.0 to 1.0, risk weight by change type
+	ServiceScope      float64        `json:"service_scope"`      // 0.0 to 1.0, direct vs indirect
 }

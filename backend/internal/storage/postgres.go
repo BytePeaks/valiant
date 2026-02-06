@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
+	"time"
 	"valiant/internal/domain"
 
 	"github.com/lib/pq"
@@ -21,16 +23,50 @@ func NewPostgresStorage(db *sql.DB) *PostgresStorage {
 }
 
 func (s *PostgresStorage) RunMigration(schemaPath string) error {
+	migrationName := filepath.Base(schemaPath)
+
+	// Special handling for the initial schema_migrations table creation
+	if migrationName != "000_create_schema_migrations_table.sql" {
+		// Check if migration has already been applied
+		var count int
+		err := s.db.QueryRow("SELECT COUNT(*) FROM schema_migrations WHERE version = $1", migrationName).Scan(&count)
+		if err != nil {
+			return fmt.Errorf("failed to check migration status for %s: %w", migrationName, err)
+		}
+		if count > 0 {
+			// fmt.Printf("Migration %s already applied, skipping.\n", migrationName) // Only uncomment for debugging
+			return nil
+		}
+	}
+
 	content, err := os.ReadFile(schemaPath)
 	if err != nil {
-		return fmt.Errorf("failed to read migration file: %w", err)
+		return fmt.Errorf("failed to read migration file %s: %w", migrationName, err)
 	}
 
-	if _, err := s.db.Exec(string(content)); err != nil {
-		return fmt.Errorf("failed to execute migration: %w", err)
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction for migration %s: %w", migrationName, err)
 	}
 
-	return nil
+	if _, err := tx.Exec(string(content)); err != nil {
+		tx.Rollback()
+		return fmt.Errorf("failed to execute migration %s: %w", migrationName, err)
+	}
+
+	// Record migration as applied, unless it's the schema_migrations table itself
+	if migrationName != "000_create_schema_migrations_table.sql" {
+		if _, err := tx.Exec("INSERT INTO schema_migrations (version) VALUES ($1)", migrationName); err != nil {
+			tx.Rollback()
+			return fmt.Errorf("failed to record migration %s: %w", migrationName, err)
+		}
+	} else {
+		// If it's the schema_migrations table, we don't record it in itself during its creation.
+		// It's considered implicitly applied once successfully executed.
+		// Future runs will simply CREATE TABLE IF NOT EXISTS without issues.
+	}
+
+	return tx.Commit()
 }
 
 func (s *PostgresStorage) SaveChangeEvent(ctx context.Context, event domain.ChangeEvent) error {
@@ -74,11 +110,7 @@ func (s *PostgresStorage) SaveChangeEvent(ctx context.Context, event domain.Chan
 	return nil
 }
 
-func (s *PostgresStorage) GetChangeEvents(ctx context.Context, filters map[string]interface{}) ([]domain.ChangeEvent, error) {
-	query := `
-		SELECT id, source, trigger_type, execution_id, change_type, timestamp, end_time, affected_services, metadata, summary
-		FROM change_events
-	`
+func (s *PostgresStorage) GetChangeEvents(ctx context.Context, filters map[string]interface{}) ([]domain.ChangeEvent, int, error) {
 	var args []interface{}
 	var whereClauses []string
 	argCount := 1
@@ -86,6 +118,11 @@ func (s *PostgresStorage) GetChangeEvents(ctx context.Context, filters map[strin
 	if triggerType, ok := filters["trigger_type"]; ok {
 		whereClauses = append(whereClauses, fmt.Sprintf("trigger_type = $%d", argCount))
 		args = append(args, triggerType)
+		argCount++
+	}
+	if changeType, ok := filters["change_type"]; ok {
+		whereClauses = append(whereClauses, fmt.Sprintf("change_type = $%d", argCount))
+		args = append(args, changeType)
 		argCount++
 	}
 	if from, ok := filters["from_timestamp"]; ok {
@@ -98,24 +135,67 @@ func (s *PostgresStorage) GetChangeEvents(ctx context.Context, filters map[strin
 		args = append(args, to)
 		argCount++
 	}
+	if ns, ok := filters["namespace"]; ok {
+		whereClauses = append(whereClauses, fmt.Sprintf("metadata ->> 'env' = $%d", argCount))
+		args = append(args, ns)
+		argCount++
+	}
+	if search, ok := filters["search"].(string); ok && search != "" {
+		pattern := "%" + search + "%"
+		whereClauses = append(whereClauses, fmt.Sprintf("(summary ILIKE $%d OR metadata::text ILIKE $%d)", argCount, argCount+1))
+		args = append(args, pattern, pattern)
+		argCount += 2
+	}
+	if metadata, ok := filters["metadata_has_any"].(map[string]string); ok && len(metadata) > 0 {
+		var metadataClauses []string
+		for key, value := range metadata {
+			metadataClauses = append(metadataClauses, fmt.Sprintf("metadata @> $%d", argCount))
+			jsonFilter := fmt.Sprintf(`{"%s": "%s"}`, key, value)
+			args = append(args, jsonFilter)
+			argCount++
+		}
+		whereClauses = append(whereClauses, "("+strings.Join(metadataClauses, " OR ")+")")
+	}
 	if services, ok := filters["services_any_of"].([]string); ok && len(services) > 0 {
 		whereClauses = append(whereClauses, fmt.Sprintf("affected_services && $%d", argCount))
 		args = append(args, pq.Array(services))
 		argCount++
 	}
 
+	whereSQL := ""
 	if len(whereClauses) > 0 {
-		query += " WHERE " + strings.Join(whereClauses, " AND ")
+		whereSQL = " WHERE " + strings.Join(whereClauses, " AND ")
 	}
 
-	query += `
-		ORDER BY timestamp DESC
-		LIMIT 100
-	`
+	// Count query
+	countQuery := "SELECT COUNT(*) FROM change_events" + whereSQL
+	var total int
+	if err := s.db.QueryRowContext(ctx, countQuery, args...).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("failed to count change events: %w", err)
+	}
 
-	rows, err := s.db.QueryContext(ctx, query, args...)
+	// Pagination defaults
+	limit := 50
+	offset := 0
+	if l, ok := filters["limit"].(int); ok && l > 0 {
+		limit = l
+		if limit > 200 {
+			limit = 200
+		}
+	}
+	if o, ok := filters["offset"].(int); ok && o >= 0 {
+		offset = o
+	}
+
+	selectQuery := `
+		SELECT id, source, trigger_type, execution_id, change_type, timestamp, end_time, affected_services, metadata, summary
+		FROM change_events` + whereSQL + fmt.Sprintf(`
+		ORDER BY timestamp DESC
+		LIMIT %d OFFSET %d`, limit, offset)
+
+	rows, err := s.db.QueryContext(ctx, selectQuery, args...)
 	if err != nil {
-		return nil, fmt.Errorf("failed to query change events: %w", err)
+		return nil, 0, fmt.Errorf("failed to query change events: %w", err)
 	}
 	defer rows.Close()
 
@@ -140,7 +220,7 @@ func (s *PostgresStorage) GetChangeEvents(ctx context.Context, filters map[strin
 			&event.Summary,
 		)
 		if err != nil {
-			return nil, fmt.Errorf("failed to scan change event: %w", err)
+			return nil, 0, fmt.Errorf("failed to scan change event: %w", err)
 		}
 
 		event.TriggerType = triggerType.String
@@ -152,13 +232,21 @@ func (s *PostgresStorage) GetChangeEvents(ctx context.Context, filters map[strin
 
 		event.AffectedServices = []string(affectedServices)
 		if err := json.Unmarshal(metadataJSON, &event.Metadata); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal metadata: %w", err)
+			return nil, 0, fmt.Errorf("failed to unmarshal metadata: %w", err)
 		}
 
 		events = append(events, event)
 	}
 
-	return events, nil
+	return events, total, nil
+}
+
+func (s *PostgresStorage) DeleteChangeEventsOlderThan(ctx context.Context, cutoff time.Time) (int64, error) {
+	result, err := s.db.ExecContext(ctx, "DELETE FROM change_events WHERE timestamp < $1", cutoff)
+	if err != nil {
+		return 0, fmt.Errorf("failed to delete old change events: %w", err)
+	}
+	return result.RowsAffected()
 }
 
 func (s *PostgresStorage) GetChangeEventByID(ctx context.Context, id string) (domain.ChangeEvent, error) {
@@ -208,7 +296,6 @@ func (s *PostgresStorage) GetChangeEventByID(ctx context.Context, id string) (do
 
 	return event, nil
 }
-
 func (s *PostgresStorage) GetServices(ctx context.Context) ([]string, error) {
 	query := `
 		SELECT DISTINCT unnest(affected_services) as service
@@ -360,4 +447,84 @@ func (s *PostgresStorage) GetImpactAnalysisByEventID(ctx context.Context, eventI
 	}
 
 	return &analysis, nil
+}
+
+func (s *PostgresStorage) GetAnalyzedEventIDs(ctx context.Context, eventIDs []string) (map[string]bool, error) {
+	if len(eventIDs) == 0 {
+		return map[string]bool{}, nil
+	}
+
+	query := `SELECT event_id FROM impact_analysis_snapshots WHERE event_id = ANY($1)`
+	rows, err := s.db.QueryContext(ctx, query, pq.Array(eventIDs))
+	if err != nil {
+		return nil, fmt.Errorf("failed to check analyzed event IDs: %w", err)
+	}
+	defer rows.Close()
+
+	result := make(map[string]bool)
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		result[id] = true
+	}
+	return result, nil
+}
+
+func (s *PostgresStorage) GetServicePreferences(ctx context.Context, serviceName string) ([]string, error) {
+	query := `
+		SELECT visible_metrics FROM service_preferences WHERE service_name = $1
+	`
+	var visibleMetrics pq.StringArray
+	err := s.db.QueryRowContext(ctx, query, serviceName).Scan(&visibleMetrics)
+
+	if err == sql.ErrNoRows {
+		return []string{}, nil // Return empty slice if no preferences found
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get service preferences for %s: %w", serviceName, err)
+	}
+
+	return []string(visibleMetrics), nil
+}
+
+func (s *PostgresStorage) SaveServicePreferences(ctx context.Context, serviceName string, visibleMetrics []string) error {
+	query := `
+		INSERT INTO service_preferences (service_name, visible_metrics)
+		VALUES ($1, $2)
+		ON CONFLICT (service_name) DO UPDATE SET
+			visible_metrics = EXCLUDED.visible_metrics
+	`
+	_, err := s.db.ExecContext(ctx, query, serviceName, pq.Array(visibleMetrics))
+	if err != nil {
+		return fmt.Errorf("failed to save service preferences for %s: %w", serviceName, err)
+	}
+	return nil
+}
+
+func (s *PostgresStorage) GetNamespaces(ctx context.Context) ([]string, error) {
+	query := `
+		SELECT DISTINCT metadata ->> 'env' as namespace
+		FROM change_events
+		WHERE metadata ? 'env'
+		ORDER BY namespace ASC
+	`
+
+	rows, err := s.db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get namespaces: %w", err)
+	}
+	defer rows.Close()
+
+	var namespaces []string
+	for rows.Next() {
+		var namespace string
+		if err := rows.Scan(&namespace); err != nil {
+			return nil, err
+		}
+		namespaces = append(namespaces, namespace)
+	}
+
+	return namespaces, nil
 }

@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"testing"
+	"time"
 )
 
 func TestLoad_WithEnvVars(t *testing.T) {
@@ -46,6 +47,7 @@ func TestLoad_WithEnvVars(t *testing.T) {
 	}
 }
 
+// ---- KEEP YOUR LEGACY ENV TEST ----
 func TestLoad_LegacyEnvVars(t *testing.T) {
 	os.Setenv("DATABASE_URL", "postgres://legacy:pass@db:5432/legacy")
 	os.Setenv("PORT", "7000")
@@ -71,6 +73,36 @@ func TestLoad_LegacyEnvVars(t *testing.T) {
 	}
 }
 
+// ---- KEEP DEVELOP YAML TEST ----
+func TestLoad_YAML(t *testing.T) {
+	yamlContent := `
+port: "7070"
+analysis:
+  baseline_window: "15m"
+  post_execution_impact_window: "1h"
+  intent_execution_correlation_window: "2h"
+`
+	tmpFile := "test_config.yaml"
+	err := os.WriteFile(tmpFile, []byte(yamlContent), 0644)
+	if err != nil {
+		t.Fatalf("failed to write temp file: %v", err)
+	}
+	defer os.Remove(tmpFile)
+
+	cfg, err := Load(tmpFile)
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+
+	if cfg.Port != "7070" {
+		t.Errorf("expected port 7070, got %s", cfg.Port)
+	}
+
+	if cfg.Analysis.IntentExecutionCorrelationDur != 2*time.Hour {
+		t.Errorf("expected intent correlation 2h, got %v", cfg.Analysis.IntentExecutionCorrelationDur)
+	}
+}
+
 func TestLoad_WithDefaults(t *testing.T) {
 	cfg, err := Load("")
 	if err != nil {
@@ -87,10 +119,6 @@ func TestLoad_WithDefaults(t *testing.T) {
 
 	if cfg.Analysis.BaselineWindow != "30m" {
 		t.Errorf("Expected default baseline_window 30m, got: %s", cfg.Analysis.BaselineWindow)
-	}
-
-	if cfg.Analysis.BaselineDur.Minutes() != 30 {
-		t.Errorf("Expected baseline duration 30 minutes, got: %v", cfg.Analysis.BaselineDur)
 	}
 }
 

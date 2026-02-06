@@ -20,6 +20,10 @@ send_event() {
   fi
 
   local id=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 12 | head -n 1)
+  
+  # Randomly pick an environment
+  local envs=("default" "payment-app")
+  local env=${envs[$((RANDOM % ${#envs[@]}))]}
 
   curl -s -X POST "$API_URL/events" \
     -H "Content-Type: application/json" \
@@ -33,11 +37,11 @@ send_event() {
       \"summary\": \"$summary\",
       \"metadata\": {
         \"author\": \"konrad\",
-        \"env\": \"production\",
+        \"env\": \"$env\",
         \"version\": \"v2.4.$((RANDOM % 10))\"
       }
     }"
-  echo " Sent: $summary"
+  echo " Sent: $summary (env: $env)"
 }
 
 # Generate 10 events

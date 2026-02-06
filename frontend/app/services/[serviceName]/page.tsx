@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { ChangeEvent, fetchChangeEvents } from '@/lib/api';
+import { ChangeEvent, EventsResponse, fetchChangeEvents } from '@/lib/api';
 import Timeline from '@/components/timeline/timeline';
 import { ChevronLeft, Activity, Filter, RefreshCcw } from 'lucide-react';
 import Link from 'next/link';
@@ -11,16 +11,16 @@ export default function ServicePage() {
   const { serviceName } = useParams();
   const router = useRouter();
   const [events, setEvents] = useState<ChangeEvent[]>([]);
+  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
 
   const fetchServiceEvents = () => {
     setLoading(true);
     const decodedName = decodeURIComponent(serviceName as string);
-    fetchChangeEvents()
-      .then((data) => {
-        // Filter for this specific service
-        const filtered = data.filter(e => e.affected_services.includes(decodedName));
-        setEvents(filtered);
+    fetchChangeEvents({ service: decodedName, limit: 50 })
+      .then((response: EventsResponse) => {
+        setEvents(response.events);
+        setTotal(response.total);
       })
       .finally(() => setLoading(false));
   };
@@ -56,7 +56,7 @@ export default function ServicePage() {
           <div className="flex items-center gap-4">
              <div className="text-right hidden sm:block">
                 <div className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Total Changes</div>
-                <div className="text-2xl font-black text-gray-900">{events.length}</div>
+                <div className="text-2xl font-black text-gray-900">{total}</div>
              </div>
              <button 
               onClick={fetchServiceEvents}

@@ -14,7 +14,7 @@ func TestNewPrometheusClient(t *testing.T) {
 	queries := map[string]string{
 		"error_rate": "sum(rate(errors[{{ .Duration }}]))",
 	}
-	client, err := metrics.NewPrometheusClient("http://localhost:9090", queries)
+	client, err := metrics.NewPrometheusClient("http://localhost:9090", queries, nil)
 	if err != nil {
 		t.Fatalf("failed to create client: %v", err)
 	}

@@ -12,6 +12,11 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U valiant"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   backend:
     build: ./backend
@@ -23,7 +28,7 @@ services:
     ports:
       - "8080:8080"
     volumes:
-      - ./example/config.yaml:/app/config.yaml
+      - ./example/config.yaml:/root/config.yaml
     depends_on:
       - postgres
 
@@ -36,7 +41,7 @@ services:
     ports:
       - "3000:3000"
     volumes:
-      - ./frontend:/app
+
       - /app/node_modules
     depends_on:
       - backend
