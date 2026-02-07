@@ -1,4 +1,3 @@
-
 import { useState, useEffect } from 'react';
 import { Clock, Zap, GitBranch, Box, Bot, Info, Hourglass, Loader2, Tag, ShieldCheck, Settings2, Activity } from 'lucide-react';
 import { timeAgo, getImpactColor } from '../../lib/utils';
@@ -7,6 +6,11 @@ import { fetchAvailableMetrics, analyzeImpact, fetchServicePreferences, saveServ
 import { MetricDelta } from './metric-delta';
 import { METRIC_CONFIG, CORE_METRICS } from './constants';
 import { getIcon } from '../icons';
+
+const isUrl = (text: string): boolean => {
+  if (!text) return false;
+  return text.startsWith('http://') || text.startsWith('https://');
+};
 
 export default function TimelineEvent({ event }: TimelineEventProps) {
   const [analysis, setAnalysis] = useState<ImpactAnalysis | null>(null);
@@ -252,6 +256,34 @@ export default function TimelineEvent({ event }: TimelineEventProps) {
                 );
               })}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Metadata Section */}
+      {event.metadata && Object.keys(event.metadata).length > 0 && (
+        <div className="mt-6 pt-6 border-t border-gray-100">
+          <h4 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3">
+            Metadata
+          </h4>
+          <div className="space-y-2">
+            {Object.entries(event.metadata).map(([key, value]) => (
+              <div key={key} className="flex text-sm">
+                <span className="font-semibold text-gray-600 min-w-[120px]">{key}:</span>
+                {isUrl(value) ? (
+                  <a
+                    href={value}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-blue-600 hover:text-blue-800 hover:underline break-all"
+                  >
+                    {value}
+                  </a>
+                ) : (
+                  <span className="text-gray-700 break-all">{value}</span>
+                )}
+              </div>
+            ))}
           </div>
         </div>
       )}
