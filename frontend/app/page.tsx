@@ -309,10 +309,13 @@ export default function Home() {
             </button>
           </div>
 
-          {loading && events.length > 0 && (
-            <div className="flex items-center gap-2 text-xs text-gray-400 font-medium mb-4">
-              <RefreshCcw className="w-3 h-3 animate-spin" />
-              Updating results...
+          {loading && (
+            <div className="mb-6 bg-blue-50 border border-blue-200 rounded-xl p-4 flex items-center gap-3">
+              <RefreshCcw className="w-5 h-5 text-blue-600 animate-spin" />
+              <div>
+                <p className="text-sm font-semibold text-blue-900">Analyzing changes...</p>
+                <p className="text-xs text-blue-600">Processing events and correlations</p>
+              </div>
             </div>
           )}
 
