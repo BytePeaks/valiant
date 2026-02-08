@@ -12,13 +12,6 @@ import (
 )
 
 const (
-	// Metric Weights
-	weightErrorRate        = 0.4
-	weightLatencyP95       = 0.3
-	weightCPUSaturation    = 0.1
-	weightMemorySaturation = 0.1
-	weightRPS              = 0.1
-
 	// Impact Thresholds
 	thresholdHigh   = 0.7
 	thresholdMedium = 0.4
@@ -131,7 +124,7 @@ func (e *Engine) AnalyzeImpact(ctx context.Context, event domain.ChangeEvent) (d
 	deltas := calculateDeltas(baselineMetrics, impactMetrics)
 
 	// 5. Normalize deltas into a 0-1 score and compute weighted sum.
-	impactScore := calculateImpactScore(deltas)
+	impactScore := calculateImpactScore(deltas, e.config.Analysis.WeightsBuiltIn, e.config.Analysis.WeightsCustom)
 
 	// 6. Classify impact level.
 	impactLevel := classifyImpactLevel(impactScore)
@@ -295,26 +288,64 @@ func calculateDelta(baseline, impact float64) float64 {
 	return (impact - baseline) / baseline
 }
 
-func calculateImpactScore(deltas domain.MetricValues) float64 {
-	// Normalize scores (cap at 1.0, min 0.0)
-	// For error, latency, cpu, mem: increase is bad.
-	// For RPS: decrease is bad.
+func calculateImpactScore(deltas domain.MetricValues, weightsBuiltIn, weightsCustom map[string]float64) float64 {
+	// 1. Combine all weights and create a map of normalized metric scores
+	allWeights := make(map[string]float64)
+	normalizedScores := make(map[string]float64)
+	totalWeight := 0.0
 
-	normError := math.Max(0, math.Min(deltas.ErrorRate/2.0, 1.0))
-	normLatency := math.Max(0, math.Min(deltas.LatencyP95/2.0, 1.0))
-	normCPU := math.Max(0, math.Min(deltas.CPU/2.0, 1.0))
-	normMem := math.Max(0, math.Min(deltas.Memory/2.0, 1.0))
+	// Handle built-in metrics
+	if w, ok := weightsBuiltIn["error_rate"]; ok {
+		allWeights["error_rate"] = w
+		totalWeight += w
+		normalizedScores["error_rate"] = math.Max(0, math.Min(deltas.ErrorRate/2.0, 1.0))
+	}
+	if w, ok := weightsBuiltIn["latency_p95_ms"]; ok {
+		allWeights["latency_p95_ms"] = w
+		totalWeight += w
+		normalizedScores["latency_p95_ms"] = math.Max(0, math.Min(deltas.LatencyP95/2.0, 1.0))
+	}
+	if w, ok := weightsBuiltIn["cpu"]; ok {
+		allWeights["cpu"] = w
+		totalWeight += w
+		normalizedScores["cpu"] = math.Max(0, math.Min(deltas.CPU/2.0, 1.0))
+	}
+	if w, ok := weightsBuiltIn["memory"]; ok {
+		allWeights["memory"] = w
+		totalWeight += w
+		normalizedScores["memory"] = math.Max(0, math.Min(deltas.Memory/2.0, 1.0))
+	}
+	if w, ok := weightsBuiltIn["rps"]; ok {
+		allWeights["rps"] = w
+		totalWeight += w
+		// RPS: We care about drops. A drop of 100% (-1.0) should be score 1.0.
+		normalizedScores["rps"] = math.Max(0, math.Min(deltas.RPS*-1.0, 1.0))
+	}
 
-	// RPS: We care about drops. A drop of 100% (-1.0) should be score 1.0.
-	// Delta is (impact - baseline) / baseline.
-	// If baseline 100, impact 0 -> delta = -1.0.  -1.0 * -1 = 1.0.
-	normRPS := math.Max(0, math.Min(deltas.RPS*-1.0, 1.0))
+	// Handle custom metrics
+	for name, delta := range deltas.AdditionalMetrics {
+		if w, ok := weightsCustom[name]; ok {
+			allWeights[name] = w
+			totalWeight += w
+			// Assuming higher delta is worse for custom metrics for now
+			normalizedScores[name] = math.Max(0, math.Min(delta/2.0, 1.0))
+		}
+	}
 
-	totalScore := (normError * weightErrorRate) +
-		(normLatency * weightLatencyP95) +
-		(normCPU * weightCPUSaturation) +
-		(normMem * weightMemorySaturation) +
-		(normRPS * weightRPS)
+	// 2. Normalize weights if total is not 0
+	if totalWeight > 0 {
+		for name := range allWeights {
+			allWeights[name] /= totalWeight
+		}
+	}
+
+	// 3. Calculate final weighted score
+	totalScore := 0.0
+	for name, score := range normalizedScores {
+		if weight, ok := allWeights[name]; ok {
+			totalScore += score * weight
+		}
+	}
 
 	return totalScore
 }

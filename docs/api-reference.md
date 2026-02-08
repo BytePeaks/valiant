@@ -196,14 +196,33 @@ List all available metrics (core + additional from config).
 
 ```json
 [
-  { "name": "error_rate" },
-  { "name": "latency_p95_ms" },
-  { "name": "rps" },
-  { "name": "cpu" },
-  { "name": "memory" },
-  { "name": "orders_per_minute", "icon": "ShoppingCart" },
-  { "name": "payment_failure_rate", "icon": "CreditCard" }
+  {
+    "name": "error_rate",
+    "icon": "AlertCircle",
+    "weight": 0.4,
+    "type": "builtin",
+    "description": "Rate of HTTP errors (status 5xx) for a service.",
+    "promql": "avg_over_time(sum(rate(http_requests_total{service=~\"{{ .Services }}\",status=~\"5..\"}[1m]))[{{ .Duration }}])"
+  },
+  {
+    "name": "orders_per_minute",
+    "icon": "ShoppingCart",
+    "weight": 0.1,
+    "type": "custom",
+    "description": "Custom metric: orders_per_minute",
+    "query": "sum(rate(app_orders_total{service=~\"{{ .Services }}\"}[1m])) * 60"
+  }
 ]
+
+| Field | Type | Description |
+|:------|:-----|:------------|
+| `name` | string | Unique identifier for the metric |
+| `icon` | string | Optional. Lucide icon name for UI display |
+| `weight` | float | Normalized weight (0.0 - 1.0) contributing to the overall impact score |
+| `type` | string | Metric type: `"builtin"` or `"custom"` |
+| `description` | string | Human-readable description of the metric |
+| `promql` | string | PromQL query template for built-in metrics |
+| `query` | string | Actual PromQL query string for custom metrics |
 ```
 
 ---

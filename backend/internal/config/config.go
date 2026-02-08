@@ -15,14 +15,27 @@ type PrometheusMetric struct {
 	Icon  string `yaml:"icon,omitempty" json:"icon,omitempty"`
 }
 
+type PrometheusConfig struct {
+	URL              string            `yaml:"url"`
+	Queries          map[string]string `yaml:"queries"`
+	AdditionalMetrics []PrometheusMetric `yaml:"additional_metrics"`
+}
+
+type AnalysisConfig struct {
+	BaselineWindow string        `yaml:"baseline_window"` // e.g., "30m"
+	ImpactWindow   string        `yaml:"post_execution_impact_window"`
+	BaselineDur    time.Duration `yaml:"-"`
+	ImpactDur             time.Duration `yaml:"-"`
+	IntentExecutionCorrelationWindow string        `yaml:"intent_execution_correlation_window"`
+	IntentExecutionCorrelationDur  time.Duration `yaml:"-"`
+	WeightsBuiltIn  map[string]float64 `yaml:"weights_built_in"`
+	WeightsCustom   map[string]float64 `yaml:"weights_custom"`
+}
+
 type Config struct {
 	DatabaseURL string `yaml:"database_url"`
 	Port        string `yaml:"port"`
-	Prometheus  struct {
-		URL              string            `yaml:"url"`
-		Queries          map[string]string `yaml:"queries"`
-		AdditionalMetrics []PrometheusMetric `yaml:"additional_metrics"`
-	} `yaml:"prometheus"`
+	Prometheus  PrometheusConfig `yaml:"prometheus"`
 	Kubernetes struct {
 		Enabled           bool     `yaml:"enabled"`
 		KubeConfigPath    string   `yaml:"kube_config_path"`
@@ -38,14 +51,7 @@ type Config struct {
 		CleanupInterval    string        `yaml:"cleanup_interval"`
 		CleanupIntervalDur time.Duration `yaml:"-"`
 	} `yaml:"retention"`
-	Analysis struct {
-		BaselineWindow string        `yaml:"baseline_window"` // e.g., "30m"
-		ImpactWindow   string        `yaml:"post_execution_impact_window"`
-		BaselineDur    time.Duration `yaml:"-"`
-		ImpactDur             time.Duration `yaml:"-"`
-		IntentExecutionCorrelationWindow string        `yaml:"intent_execution_correlation_window"`
-		IntentExecutionCorrelationDur  time.Duration `yaml:"-"`
-	} `yaml:"analysis"`
+	Analysis AnalysisConfig `yaml:"analysis"`
 }
 
 func Load(configPath string) (*Config, error) {
@@ -67,6 +73,14 @@ func Load(configPath string) (*Config, error) {
 	cfg.Analysis.BaselineWindow = "30m"
 	cfg.Analysis.ImpactWindow = "30m"
 	cfg.Analysis.IntentExecutionCorrelationWindow = "1h"
+	cfg.Analysis.WeightsBuiltIn = map[string]float64{
+		"error_rate":     0.4,
+		"latency_p95_ms": 0.3,
+		"cpu":            0.1,
+		"memory":         0.1,
+		"rps":            0.1,
+	}
+	cfg.Analysis.WeightsCustom = map[string]float64{}
 
 	// Load from YAML if exists, potentially overriding defaults
 	if configPath != "" {

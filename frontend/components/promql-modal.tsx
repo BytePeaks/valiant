@@ -5,10 +5,12 @@ import { X, Copy, Check, Info } from 'lucide-react';
 
 export interface MetricInfo {
   name: string;
-  description: string;
+  description?: string;
   promql?: string;
   query?: string;
   icon?: string;
+  weight?: number;
+  type?: string;
 }
 
 interface PromQLModalProps {
@@ -45,7 +47,20 @@ export default function PromQLModal({ isOpen, onClose, metrics, customMetrics }:
       const query = metric.query || metric.promql || '';
       return (
         <div key={index} className="mb-6 last:mb-0 p-4 border border-gray-200 rounded-lg bg-gray-50">
-          <h4 className="font-semibold text-gray-700 text-base mb-1">{metric.name}</h4>
+          <div className="flex justify-between items-center mb-1">
+            <h4 className="font-semibold text-gray-700 text-base">{metric.name}</h4>
+            {metric.weight !== undefined && (
+              <div className="relative group ml-4">
+                <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-blue-100 text-blue-800">
+                  {(metric.weight * 100).toFixed(1)}% Weight
+                </span>
+                <div className="absolute top-full right-0 mt-2 hidden group-hover:block w-48 p-2 bg-gray-700 text-white text-xs rounded shadow-lg z-10 text-center">
+                  This metric contributes {(metric.weight * 100).toFixed(1)}% to the overall impact score.
+                  <div className="absolute bottom-full right-2 border-4 border-transparent border-b-gray-700"></div>
+                </div>
+              </div>
+            )}
+          </div>
           <p className="text-sm text-gray-500 mb-3">{metric.description}</p>
           <div className="relative bg-gray-800 rounded-md p-3 font-mono text-white text-xs flex items-center justify-between">
             <code className="flex-1 overflow-x-auto whitespace-pre-wrap pr-8">

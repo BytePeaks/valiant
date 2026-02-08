@@ -81,7 +81,7 @@ func main() {
 	}
 	fmt.Println("Database migrations applied")
 
-	metricClient, err := metrics.NewPrometheusClient(cfg.Prometheus.URL, cfg.Prometheus.Queries, cfg.Prometheus.AdditionalMetrics)
+	metricClient, err := metrics.NewPrometheusClient(cfg.Prometheus.URL, cfg.Prometheus.Queries, cfg.Prometheus.AdditionalMetrics, cfg)
 	if err != nil {
 		log.Fatalf("Failed to initialize prometheus client: %v", err)
 	}

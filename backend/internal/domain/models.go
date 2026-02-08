@@ -41,6 +41,10 @@ type ImpactAnalysis struct {
 type MetricInfo struct {
 	Name string `json:"name"`
 	Icon string `json:"icon,omitempty"`
+	Weight float64 `json:"weight,omitempty"`
+	Type string `json:"type,omitempty"` // Added for classification (builtin/custom)
+	Promql string `json:"promql,omitempty"` // For built-in display example
+	Query string `json:"query,omitempty"` // For custom metric raw query
 }
 
 // RankedChange represents a change event ranked by likelihood of causing degradation.

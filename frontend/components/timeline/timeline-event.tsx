@@ -2,7 +2,8 @@
 import { useState, useEffect } from 'react';
 import { Clock, Zap, GitBranch, Box, Bot, Info, Hourglass, Loader2, Tag, ShieldCheck, Settings2, Activity } from 'lucide-react';
 import { timeAgo, getImpactColor } from '../../lib/utils';
-import type { ChangeEvent, ImpactAnalysis, TimelineEventProps, MetricInfo } from '../../lib/api';
+import type { ChangeEvent, ImpactAnalysis, TimelineEventProps } from '../../lib/api';
+import type { MetricInfo } from '../promql-modal';
 import { fetchAvailableMetrics, analyzeImpact, fetchServicePreferences, saveServicePreferences } from '../../lib/api';
 import { MetricDelta } from './metric-delta';
 import { METRIC_CONFIG, CORE_METRICS } from './constants';
