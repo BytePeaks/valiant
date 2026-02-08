@@ -77,8 +77,9 @@ The correlator engine compares baseline metrics against impact metrics to produc
 
 1. **Calculate deltas** - Percentage change from baseline to impact for each metric: `(impact - baseline) / baseline`
 2. **Normalize** - Each delta is normalized to a 0-1 range (capped). For error rate, latency, CPU, and memory, increases are bad. For RPS, decreases are bad.
-3. **Weighted sum** - Apply fixed weights to produce a composite score:
+3. **Weighted sum** - Valiant applies configurable weights to the normalized deltas to produce a composite impact score. These weights are defined in `config.yaml` under the `analysis` section, allowing users to customize the relative importance of each built-in and custom metric. The system automatically normalizes these weights so that their sum is 1.0. Setting a metric's weight to `0` effectively removes its contribution to the overall impact score.
 
+#### Built-in metrics weight (default)
 | Metric | Weight |
 |:-------|:-------|
 | Error Rate | 0.4 |

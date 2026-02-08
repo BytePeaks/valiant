@@ -123,6 +123,32 @@ analysis:
   intent_execution_correlation_window: "1h"
 ```
 
+### Analysis Metrics Weights
+
+```yaml
+analysis:
+  # Metric Weights
+  # --------------
+  # Define the relative importance of each metric in the impact score calculation.
+  # The weights are normalized, so you can use any numbers you want (e.g., 1-100).
+  # If a metric is not listed here, it will not be included in the score.
+  #
+  # The default built-in weights are applied automatically. Uncomment and modify
+  # 'weights_built_in' if you need to override these defaults.
+  weights_built_in:
+    error_rate: 0.4
+    latency_p95_ms: 0.3
+    cpu: 0.1
+    memory: 0.1
+    rps: 0.1
+
+  # Define weights for any custom metrics you have configured under `prometheus.additional_metrics`.
+  # The name here must exactly match the `name` in the `additional_metrics` list.
+  weights_custom:
+    orders_per_minute: 0.1
+    payment_failure_rate: 0.2
+```
+
 ---
 
 ## Complete Example

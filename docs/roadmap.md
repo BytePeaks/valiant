@@ -9,7 +9,7 @@ Current status of features and planned work for Valiant.
 - **Kubernetes Collector** - Watches Deployments, ReplicaSets, ConfigMaps, and Secrets with annotation-based filtering
 - **Execution Fingerprinting** - Ignores rollouts where the generation changed but the fingerprint (git-sha) remained identical, filtering out manual `kubectl edit` actions
 - **Orphan Detection** - Highlights execution events with no matching intent (CI) event
-- **Deterministic Impact Scoring** - Baseline vs impact window comparison with weighted scoring (error_rate=0.4, latency=0.3, cpu=0.1, memory=0.1, rps=0.1)
+- **Deterministic Impact Scoring** - Baseline vs impact window comparison with configurable weighted scoring (for both built-in and custom metrics)
 - **Immutable Analysis Snapshots** - Results stored permanently, never retroactively altered
 - **Confidence Scoring** - Secondary score based on traffic volume significance
 - **Change Ranking** - Ranks concurrent changes by likelihood of causing degradation
