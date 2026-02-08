@@ -1,38 +1,15 @@
 'use client';
 
 import { useEffect, useState, useCallback, useRef } from 'react';
-import { ChangeEvent, EventsResponse, fetchChangeEvents, fetchServices, fetchNamespaces, CustomMetricInfo, fetchCustomMetrics } from '@/lib/api'; // Added CustomMetricInfo, fetchCustomMetrics
+import { ChangeEvent, EventsResponse, fetchChangeEvents, fetchServices, fetchNamespaces, fetchAvailableMetrics } from '@/lib/api'; // Added fetchAvailableMetrics
 import Timeline from '@/components/timeline/timeline';
 import { RefreshCcw, Filter, ExternalLink, ChevronDown, ChevronUp, Layers, Search, X, Zap, Info } from 'lucide-react'; // Added Info
 import Link from 'next/link';
-import PromQLModal, { MetricInfo } from '@/components/promql-modal'; // Added PromQLModal, MetricInfo
+import PromQLModal, { MetricInfo } from '@/components/promql-modal';
 
 const PAGE_SIZE = 10;
 
 // Metric definitions for the PromQL Modal
-const METRIC_DEFINITIONS = [
-  {
-    name: "Service Request Latency (P99)",
-    description: "P99 latency of HTTP requests to a service. Replace 'your_service' with the actual service name.",
-    promql: "histogram_quantile(0.99, sum by (le, service_name) (rate(http_request_duration_seconds_bucket{job='valiant', service_name='your_service'}[5m])))"
-  },
-  {
-    name: "Service Error Rate",
-    description: "Rate of HTTP errors (status 5xx) for a service. Replace 'your_service' with the actual service name.",
-    promql: "sum by (service_name) (rate(http_requests_total{job='valiant', service_name='your_service', status_code=~'5xx'}[5m])) / sum by (service_name) (rate(http_requests_total{job='valiant', service_name='your_service'}[5m]))"
-  },
-  {
-    name: "Node CPU Utilization",
-    description: "Average CPU utilization across all cores on a node.",
-    promql: "1 - avg by (instance) (rate(node_cpu_seconds_total{mode='idle'}[5m]))"
-  },
-  {
-    name: "Node Memory Usage",
-    description: "Percentage of memory used on a node.",
-    promql: "(node_memory_MemTotal_bytes - node_memory_MemFree_bytes) / node_memory_MemTotal_bytes * 100"
-  }
-];
-
 const CHANGE_TYPES = [
   { value: 'deployment_rollout', label: 'Deployment' },
   { value: 'configmap_update', label: 'ConfigMap' },
@@ -60,8 +37,9 @@ export default function Home() {
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const abortControllerRef = useRef<AbortController | null>(null);
   const [isPromQLModalOpen, setIsPromQLModalOpen] = useState(false); // New state for modal
-  const [dynamicCustomMetrics, setDynamicCustomMetrics] = useState<MetricInfo[]>([]); // New state for dynamic custom metrics
-  const [loadingCustomMetrics, setLoadingCustomMetrics] = useState(true); // New state for loading custom metrics
+  const [builtinMetrics, setBuiltinMetrics] = useState<MetricInfo[]>([]);
+  const [customMetrics, setCustomMetrics] = useState<MetricInfo[]>([]);
+  const [loadingMetrics, setLoadingMetrics] = useState(true);
 
   // Debounce search input
   useEffect(() => {
@@ -71,26 +49,61 @@ export default function Home() {
     return () => clearTimeout(timer);
   }, [searchQuery]);
 
-  // Fetch custom metrics on component mount
+  // Fetch all metrics (built-in and custom) on component mount
   useEffect(() => {
-    const loadCustomMetrics = async () => {
+    const loadMetrics = async () => {
       try {
-        setLoadingCustomMetrics(true);
-        const data = await fetchCustomMetrics();
-        // Enrich data with a description for the modal, as it's not provided by the backend
-        const enrichedData = data.map(metric => ({
-            ...metric,
-            description: `Custom metric: ${metric.name}`
-        }));
-        setDynamicCustomMetrics(enrichedData);
+        setLoadingMetrics(true);
+        const allMetrics = await fetchAvailableMetrics();
+
+        const builtIn: MetricInfo[] = [];
+        const custom: MetricInfo[] = [];
+
+        allMetrics.forEach(metric => {
+          if (metric.type === "builtin") {
+            // Provide a default description for built-in metrics if missing
+            // This is just a placeholder, as the backend doesn't provide these yet.
+            // In a real app, these would come from the backend or a separate definition.
+            if (!metric.description) {
+                switch (metric.name) {
+                    case "error_rate":
+                        metric.description = "Rate of HTTP errors (status 5xx) for a service.";
+                        break;
+                    case "latency_p95_ms":
+                        metric.description = "P95 latency of HTTP requests to a service.";
+                        break;
+                    case "rps":
+                        metric.description = "Requests per second for a service.";
+                        break;
+                    case "cpu":
+                        metric.description = "Average CPU utilization across all cores on a node.";
+                        break;
+                    case "memory":
+                        metric.description = "Percentage of memory used on a node.";
+                        break;
+                    default:
+                        metric.description = `Built-in metric: ${metric.name}`;
+                }
+            }
+            builtIn.push(metric);
+          } else if (metric.type === "custom") {
+            if (!metric.description) {
+              metric.description = `Custom metric: ${metric.name}`;
+            }
+            custom.push(metric);
+          }
+        });
+        setBuiltinMetrics(builtIn);
+        setCustomMetrics(custom);
       } catch (error) {
-        console.error("Failed to fetch custom metrics:", error);
-        setDynamicCustomMetrics([]); // Ensure it's an empty array on error
+        console.error("Failed to fetch metrics:", error);
+        setBuiltinMetrics([]);
+        setCustomMetrics([]);
       } finally {
-        setLoadingCustomMetrics(false);
+        setLoadingMetrics(false);
       }
     };
-    loadCustomMetrics();
+    loadMetrics();
   }, []);
 
   const loadEvents = useCallback((
@@ -406,8 +419,8 @@ export default function Home() {
               <PromQLModal
                   isOpen={isPromQLModalOpen}
                   onClose={() => setIsPromQLModalOpen(false)}
-                  metrics={METRIC_DEFINITIONS}
-                  customMetrics={dynamicCustomMetrics}
+                  metrics={builtinMetrics}
+                  customMetrics={customMetrics}
               />
     </main>
   );

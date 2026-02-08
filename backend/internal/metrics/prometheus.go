@@ -18,10 +18,11 @@ type PrometheusClient struct {
 	api     v1.API
 	queries map[string]string
 	additionalMetrics []config.PrometheusMetric
+	config  *config.Config // Add config reference
 }
 
 // NewPrometheusClient creates a new Prometheus client.
-func NewPrometheusClient(apiURL string, queries map[string]string, additionalMetrics []config.PrometheusMetric) (*PrometheusClient, error) {
+func NewPrometheusClient(apiURL string, queries map[string]string, additionalMetrics []config.PrometheusMetric, cfg *config.Config) (*PrometheusClient, error) {
 	client, err := api.NewClient(api.Config{
 		Address: apiURL,
 	})
@@ -33,6 +34,7 @@ func NewPrometheusClient(apiURL string, queries map[string]string, additionalMet
 		api:     v1.NewAPI(client),
 		queries: queries,
 		additionalMetrics: additionalMetrics,
+		config:  cfg, // Store config
 	}, nil
 }
 
@@ -90,29 +92,66 @@ func (p *PrometheusClient) QueryMetric(ctx context.Context, metricName string, s
 
 func (p *PrometheusClient) GetAvailableMetrics() []domain.MetricInfo {
 	metrics := make([]domain.MetricInfo, 0, len(p.queries)+len(p.additionalMetrics))
-	for name := range p.queries {
-		var icon string
-				switch name {
-				case "error_rate":
-					icon = "AlertCircle"
-				case "latency_p95_ms":
-					icon = "Clock"
-				case "rps":
-					icon = "Zap"
-				case "cpu":
-					icon = "Cpu"
-				case "memory":
-					icon = "Database"
-				default:
-					icon = "Activity"
-				}
-				metrics = append(metrics, domain.MetricInfo{Name: name, Icon: icon})
-			}
-			for _, metric := range p.additionalMetrics {
-				metrics = append(metrics, domain.MetricInfo{Name: metric.Name, Icon: metric.Icon})
-			}
-			return metrics
+
+	// Collect all weights to normalize them later
+	allWeights := make(map[string]float64)
+	totalWeight := 0.0
+
+	// Add built-in metric weights
+	for name, weight := range p.config.Analysis.WeightsBuiltIn {
+		allWeights[name] = weight
+		totalWeight += weight
+	}
+	// Add custom metric weights
+	for name, weight := range p.config.Analysis.WeightsCustom {
+		allWeights[name] = weight
+		totalWeight += weight
+	}
+
+	// Normalize weights
+	normalizedWeights := make(map[string]float64)
+	if totalWeight > 0 {
+		for name, weight := range allWeights {
+			normalizedWeights[name] = weight / totalWeight
 		}
+	}
+
+
+	for name, queryTemplate := range p.queries {
+		var icon string
+		switch name {
+		case "error_rate":
+			icon = "AlertCircle"
+		case "latency_p95_ms":
+			icon = "Clock"
+		case "rps":
+			icon = "Zap"
+		case "cpu":
+			icon = "Cpu"
+		case "memory":
+			icon = "Database"
+		default:
+			icon = "Activity"
+		}
+		metrics = append(metrics, domain.MetricInfo{
+			Name: name,
+			Icon: icon,
+			Weight: normalizedWeights[name],
+			Type: "builtin", // Mark as built-in
+			Promql: queryTemplate, // This holds the template for built-in queries
+		})
+	}
+	for _, metric := range p.additionalMetrics {
+		metrics = append(metrics, domain.MetricInfo{
+			Name: metric.Name,
+			Icon: metric.Icon,
+			Weight: normalizedWeights[metric.Name],
+			Type: "custom", // Mark as custom
+			Query: metric.Query, // This holds the actual query for custom metrics
+		})
+	}
+	return metrics
+}
 		
 		
 		func (p *PrometheusClient) GetAverageMetrics(ctx context.Context, services []string, start, end time.Time) (domain.MetricValues, error) {

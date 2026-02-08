@@ -119,6 +119,11 @@ func TestAnalyzeImpact_CalculatesAndSaves(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Analysis.BaselineDur = 30 * time.Minute
 	cfg.Analysis.ImpactDur = 30 * time.Minute
+	cfg.Analysis.WeightsBuiltIn = map[string]float64{
+		"error_rate":     0.4,
+		"latency_p95_ms": 0.3,
+	}
+	cfg.Analysis.WeightsCustom = map[string]float64{}
 
 	store := &MockStorage{}
 	
@@ -128,9 +133,6 @@ func TestAnalyzeImpact_CalculatesAndSaves(t *testing.T) {
 			// Baseline (Non-zero errors to allow >100% delta)
 			{ErrorRate: 0.01, LatencyP95: 100, RPS: 100}, 
 			// Impact: 
-			// Errors: 0.01 -> 0.05 (Delta 4.0). Norm = min(4.0/2.0, 1.0) = 1.0. Contrib = 0.4.
-			// Latency: 100 -> 300 (Delta 2.0). Norm = min(2.0/2.0, 1.0) = 1.0. Contrib = 0.3.
-			// Total Score = 0.4 + 0.3 = 0.7 (HIGH)
 			{ErrorRate: 0.05, LatencyP95: 300, RPS: 100}, 
 		},
 	}
@@ -209,6 +211,10 @@ func TestAnalyzeImpact_PerfectStability(t *testing.T) {
 
 func TestAnalyzeImpact_RPSDrop(t *testing.T) {
 	cfg := &config.Config{}
+	cfg.Analysis.WeightsBuiltIn = map[string]float64{
+		"rps": 1.0, // Only consider RPS
+	}
+	cfg.Analysis.WeightsCustom = map[string]float64{}
 	store := &MockStorage{}
 	metrics := &ControllableMetrics{
 		Calls: []domain.MetricValues{
@@ -222,14 +228,19 @@ func TestAnalyzeImpact_RPSDrop(t *testing.T) {
 
 	analysis, _ := engine.AnalyzeImpact(context.Background(), event)
 
-	// RPS drop of 100% should contribute 1.0 * weightRPS (0.1) = 0.1
-	if analysis.ImpactScore != 0.1 {
-		t.Errorf("expected exactly 0.1 score for 100%% RPS drop, got %f", analysis.ImpactScore)
+	// RPS drop of 100% should be a normalized score of 1.0.
+	// With only RPS weighted, the final score should be 1.0.
+	if analysis.ImpactScore != 1.0 {
+		t.Errorf("expected exactly 1.0 score for 100%% RPS drop with only RPS weighted, got %f", analysis.ImpactScore)
 	}
 }
 
 func TestAnalyzeImpact_ZeroBaseline(t *testing.T) {
 	cfg := &config.Config{}
+	cfg.Analysis.WeightsBuiltIn = map[string]float64{
+		"error_rate": 1.0, // Only consider error rate
+	}
+	cfg.Analysis.WeightsCustom = map[string]float64{}
 	store := &MockStorage{}
 	metrics := &ControllableMetrics{
 		Calls: []domain.MetricValues{
@@ -245,8 +256,8 @@ func TestAnalyzeImpact_ZeroBaseline(t *testing.T) {
 
 	// Logic: if baseline 0 and impact > 0, delta is 1.0 (100% increase cap)
 	// Normalized error score = min(1.0/2.0, 1.0) = 0.5
-	// Weighted score = 0.5 * 0.4 = 0.2
-	expectedScore := 0.2
+	// With only error rate weighted, the final score is 0.5
+	expectedScore := 0.5
 	if analysis.ImpactScore != expectedScore {
 		t.Errorf("expected score %f for zero baseline spike, got %f", expectedScore, analysis.ImpactScore)
 	}
@@ -610,22 +621,29 @@ func TestAnalyzeImpact_AdditionalMetrics(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Analysis.BaselineDur = 30 * time.Minute
 	cfg.Analysis.ImpactDur = 30 * time.Minute
-	
+	cfg.Analysis.WeightsBuiltIn = map[string]float64{
+		"error_rate": 0.5,
+	}
+	cfg.Analysis.WeightsCustom = map[string]float64{
+		"custom_metric_a": 0.5,
+		"custom_metric_b": 0.5,
+	}
+
 	cfg.Prometheus.AdditionalMetrics = []config.PrometheusMetric{
 		{Name: "custom_metric_a", Query: "some_promql_query_a"},
 		{Name: "custom_metric_b", Query: "some_promql_query_b"},
 	}
 
 	store := &MockStorage{}
-	
+
 	// Let's create two distinct AdditionalMetrics data for baseline and impact
 	baselineAdditional := map[string]float64{
 		"custom_metric_a": 10.0,
 		"custom_metric_b": 20.0,
 	}
 	impactAdditional := map[string]float64{
-		"custom_metric_a": 15.0, // Increased by 50%
-		"custom_metric_b": 10.0, // Decreased by 50%
+		"custom_metric_a": 15.0, // Increased by 50% -> delta 0.5 -> norm 0.25
+		"custom_metric_b": 10.0, // Decreased by 50% -> delta -0.5 -> norm 0
 	}
 
 	metricsWithAdditional := &ControllableMetrics{
@@ -663,6 +681,19 @@ func TestAnalyzeImpact_AdditionalMetrics(t *testing.T) {
 
 	if analysis.Deltas.AdditionalMetrics["custom_metric_b"] != -0.5 { // (10-20)/20 = -0.5
 		t.Errorf("expected delta custom_metric_b to be -0.5, got %f", analysis.Deltas.AdditionalMetrics["custom_metric_b"])
+	}
+
+	// Score calculation
+	// error_rate delta is 0, score is 0.
+	// custom_metric_a delta is 0.5, norm score is 0.25
+	// custom_metric_b delta is -0.5, norm score is 0
+	// weights: error_rate: 0.5, custom_metric_a: 0.5, custom_metric_b: 0.5
+	// total weight = 0.5 + 0.5 + 0.5 = 1.5
+	// score = (0 * (0.5/1.5)) + (0.25 * (0.5/1.5)) + (0 * (0.5/1.5))
+	// score = 0.25 * (1/3) = 0.08333...
+	expectedScore := 0.08333333333333333
+	if analysis.ImpactScore < expectedScore-0.001 || analysis.ImpactScore > expectedScore+0.001 {
+		t.Errorf("expected score around %f, got %f", expectedScore, analysis.ImpactScore)
 	}
 
 	// Also test the GetAvailableMetrics()

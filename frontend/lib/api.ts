@@ -1,3 +1,5 @@
+import { MetricInfo } from '@/components/promql-modal';
+
 export interface ChangeEvent {
   id: string;
   source: string; // Deprecated in favor of trigger_type
@@ -120,32 +122,10 @@ export async function fetchNamespaces(): Promise<string[]> {
   return data || [];
 }
 
-
-export interface MetricInfo {
-  name: string;
-  icon?: string;
-}
-
 export async function fetchAvailableMetrics(): Promise<MetricInfo[]> {
   const res = await fetch(`${API_BASE_URL}/metrics`);
   if (!res.ok) {
     throw new Error('Failed to fetch available metrics');
-  }
-  const data = await res.json();
-  return data || [];
-}
-
-export interface CustomMetricInfo {
-  name: string;
-  query: string;
-  icon?: string;
-  description?: string;
-}
-
-export async function fetchCustomMetrics(): Promise<CustomMetricInfo[]> {
-  const res = await fetch(`${API_BASE_URL}/metrics/custom`);
-  if (!res.ok) {
-    throw new Error('Failed to fetch custom metrics');
   }
   const data = await res.json();
   return data || [];
