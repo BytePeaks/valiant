@@ -43,7 +43,7 @@ func TestWorker_RunBatch(t *testing.T) {
 	}
 	
 	engine := correlator.NewEngine(store, metrics, cfg)
-	worker := correlator.NewWorker(engine)
+	worker := correlator.NewWorker(engine, time.Millisecond) // Pass a dummy polling interval
 
 	// Run one batch manually
 	worker.RunBatchPublic(context.Background())

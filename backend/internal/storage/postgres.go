@@ -1,25 +1,32 @@
 package storage
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
+	"text/template"
 	"time"
+	"valiant/internal/config"
 	"valiant/internal/domain"
 
 	"github.com/lib/pq"
 )
 
+const max_future_skew = 2 * time.Minute
+
 type PostgresStorage struct {
-	db *sql.DB
+	db     *sql.DB
+	config *config.Config // Add config reference
 }
 
-func NewPostgresStorage(db *sql.DB) *PostgresStorage {
-	return &PostgresStorage{db: db}
+func NewPostgresStorage(db *sql.DB, cfg *config.Config) *PostgresStorage {
+	return &PostgresStorage{db: db, config: cfg}
 }
 
 func (s *PostgresStorage) RunMigration(schemaPath string) error {
@@ -70,9 +77,38 @@ func (s *PostgresStorage) RunMigration(schemaPath string) error {
 }
 
 func (s *PostgresStorage) SaveChangeEvent(ctx context.Context, event domain.ChangeEvent) error {
+	// Validate timestamps
+	now := time.Now()
+	limit := now.Add(max_future_skew)
+	event.Status = "ready" // Default status
+
+	if event.Timestamp.After(limit) {
+		skew := event.Timestamp.Sub(now)
+		event.Status = "invalid_time"
+		event.InvalidReason = "timestamp_in_future"
+		event.SkewSeconds = int(skew.Seconds())
+		log.Printf(
+			"Warning: Invalid ChangeEvent received. event_id=%s source=%s offending_field=timestamp skew_seconds=%d",
+			event.ID,
+			event.Source,
+			event.SkewSeconds,
+		)
+	} else if event.EndTime != nil && event.EndTime.After(limit) {
+		skew := event.EndTime.Sub(now)
+		event.Status = "invalid_time"
+		event.InvalidReason = "end_time_in_future"
+		event.SkewSeconds = int(skew.Seconds())
+		log.Printf(
+			"Warning: Invalid ChangeEvent received. event_id=%s source=%s offending_field=end_time skew_seconds=%d",
+			event.ID,
+			event.Source,
+			event.SkewSeconds,
+		)
+	}
+
 	query := `
-		INSERT INTO change_events (id, source, trigger_type, execution_id, change_type, timestamp, end_time, affected_services, metadata, summary)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		INSERT INTO change_events (id, source, trigger_type, execution_id, change_type, timestamp, end_time, affected_services, metadata, summary, status, invalid_reason, skew_seconds)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 		ON CONFLICT (id) DO UPDATE SET
 			source = EXCLUDED.source,
 			trigger_type = EXCLUDED.trigger_type,
@@ -82,7 +118,10 @@ func (s *PostgresStorage) SaveChangeEvent(ctx context.Context, event domain.Chan
 			end_time = EXCLUDED.end_time,
 			affected_services = EXCLUDED.affected_services,
 			metadata = EXCLUDED.metadata,
-			summary = EXCLUDED.summary
+			summary = EXCLUDED.summary,
+			status = EXCLUDED.status,
+			invalid_reason = EXCLUDED.invalid_reason,
+			skew_seconds = EXCLUDED.skew_seconds
 	`
 
 	metadataJSON, err := json.Marshal(event.Metadata)
@@ -101,6 +140,9 @@ func (s *PostgresStorage) SaveChangeEvent(ctx context.Context, event domain.Chan
 		pq.Array(event.AffectedServices),
 		metadataJSON,
 		event.Summary,
+		event.Status,
+		sql.NullString{String: event.InvalidReason, Valid: event.InvalidReason != ""},
+		sql.NullInt32{Int32: int32(event.SkewSeconds), Valid: event.SkewSeconds != 0},
 	)
 
 	if err != nil {
@@ -188,7 +230,7 @@ func (s *PostgresStorage) GetChangeEvents(ctx context.Context, filters map[strin
 	}
 
 	selectQuery := `
-		SELECT id, source, trigger_type, execution_id, change_type, timestamp, end_time, affected_services, metadata, summary
+		SELECT id, source, trigger_type, execution_id, change_type, timestamp, end_time, affected_services, metadata, summary, status, invalid_reason, skew_seconds
 		FROM change_events` + whereSQL + fmt.Sprintf(`
 		ORDER BY timestamp DESC
 		LIMIT %d OFFSET %d`, limit, offset)
@@ -204,8 +246,9 @@ func (s *PostgresStorage) GetChangeEvents(ctx context.Context, filters map[strin
 		var event domain.ChangeEvent
 		var metadataJSON []byte
 		var affectedServices pq.StringArray
-		var triggerType, executionID sql.NullString
+		var triggerType, executionID, status, invalidReason sql.NullString
 		var endTime sql.NullTime
+		var skewSeconds sql.NullInt32
 
 		err := rows.Scan(
 			&event.ID,
@@ -218,6 +261,9 @@ func (s *PostgresStorage) GetChangeEvents(ctx context.Context, filters map[strin
 			&affectedServices,
 			&metadataJSON,
 			&event.Summary,
+			&status,
+			&invalidReason,
+			&skewSeconds,
 		)
 		if err != nil {
 			return nil, 0, fmt.Errorf("failed to scan change event: %w", err)
@@ -229,6 +275,10 @@ func (s *PostgresStorage) GetChangeEvents(ctx context.Context, filters map[strin
 			t := endTime.Time
 			event.EndTime = &t
 		}
+
+		event.Status = status.String
+		event.InvalidReason = invalidReason.String
+		event.SkewSeconds = int(skewSeconds.Int32)
 
 		event.AffectedServices = []string(affectedServices)
 		if err := json.Unmarshal(metadataJSON, &event.Metadata); err != nil {
@@ -251,7 +301,7 @@ func (s *PostgresStorage) DeleteChangeEventsOlderThan(ctx context.Context, cutof
 
 func (s *PostgresStorage) GetChangeEventByID(ctx context.Context, id string) (domain.ChangeEvent, error) {
 	query := `
-		SELECT id, source, trigger_type, execution_id, change_type, timestamp, end_time, affected_services, metadata, summary
+		SELECT id, source, trigger_type, execution_id, change_type, timestamp, end_time, affected_services, metadata, summary, status, invalid_reason, skew_seconds
 		FROM change_events
 		WHERE id = $1
 	`
@@ -259,8 +309,9 @@ func (s *PostgresStorage) GetChangeEventByID(ctx context.Context, id string) (do
 	var event domain.ChangeEvent
 	var metadataJSON []byte
 	var affectedServices pq.StringArray
-	var triggerType, executionID sql.NullString
+	var triggerType, executionID, status, invalidReason sql.NullString
 	var endTime sql.NullTime
+	var skewSeconds sql.NullInt32
 
 	err := s.db.QueryRowContext(ctx, query, id).Scan(
 		&event.ID,
@@ -273,6 +324,9 @@ func (s *PostgresStorage) GetChangeEventByID(ctx context.Context, id string) (do
 		&affectedServices,
 		&metadataJSON,
 		&event.Summary,
+		&status,
+		&invalidReason,
+		&skewSeconds,
 	)
 
 	if err == sql.ErrNoRows {
@@ -288,6 +342,10 @@ func (s *PostgresStorage) GetChangeEventByID(ctx context.Context, id string) (do
 		t := endTime.Time
 		event.EndTime = &t
 	}
+
+	event.Status = status.String
+	event.InvalidReason = invalidReason.String
+	event.SkewSeconds = int(skewSeconds.Int32)
 
 	event.AffectedServices = []string(affectedServices)
 	if err := json.Unmarshal(metadataJSON, &event.Metadata); err != nil {
@@ -327,7 +385,7 @@ func (s *PostgresStorage) GetEventsPendingAnalysis(ctx context.Context) ([]domai
 		SELECT e.id, e.source, e.trigger_type, e.execution_id, e.change_type, e.timestamp, e.end_time, e.affected_services, e.metadata, e.summary
 		FROM change_events e
 		LEFT JOIN impact_analysis_snapshots s ON e.id = s.event_id
-		WHERE s.event_id IS NULL
+		WHERE s.event_id IS NULL AND e.status = 'ready'
 		ORDER BY e.timestamp DESC
 		LIMIT 50
 	`
@@ -370,6 +428,45 @@ func (s *PostgresStorage) GetEventsPendingAnalysis(ctx context.Context) ([]domai
 		}
 		event.AffectedServices = []string(affectedServices)
 		json.Unmarshal(metadataJSON, &event.Metadata)
+
+		// Generate ContextualLinks based on config
+		for _, linkTmpl := range s.config.Linking {
+			allMetadataPresent := true
+			for _, key := range linkTmpl.MetadataHas {
+				if _, ok := event.Metadata[key]; !ok {
+					allMetadataPresent = false
+					break
+				}
+			}
+
+			if allMetadataPresent {
+				tmpl, err := template.New(linkTmpl.Name).Parse(linkTmpl.URLTemplate)
+				if err != nil {
+					// Log error but continue processing other links
+					fmt.Printf("Error parsing link template '%s': %v\n", linkTmpl.Name, err)
+					continue
+				}
+
+				var tplBuffer bytes.Buffer
+				if err := tmpl.Execute(&tplBuffer, event.Metadata); err != nil {
+					// Log error but continue processing other links
+					fmt.Printf("Error executing link template '%s': %v\n", linkTmpl.Name, err)
+					continue
+				}
+
+				generatedURL := tplBuffer.String()
+				// If the template rendered "<no value>", it means a key was missing, so skip this link.
+				if strings.Contains(generatedURL, "<no value>") {
+					fmt.Printf("Skipping link '%s' due to missing metadata key in template: %s\n", linkTmpl.Name, generatedURL)
+					continue
+				}
+
+				event.ContextualLinks = append(event.ContextualLinks, domain.ContextualLink{
+					Name: linkTmpl.Name,
+					URL:  generatedURL,
+				})
+			}
+		}
 
 		events = append(events, event)
 	}
@@ -420,7 +517,7 @@ func (s *PostgresStorage) GetImpactAnalysisByEventID(ctx context.Context, eventI
 
 	var baselineJSON, impactJSON, deltasJSON []byte
 	var analysis domain.ImpactAnalysis
-	
+
 	err := s.db.QueryRowContext(ctx, query, eventID).Scan(
 		&baselineJSON,
 		&impactJSON,

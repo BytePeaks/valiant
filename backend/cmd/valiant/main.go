@@ -44,7 +44,7 @@ func main() {
 	fmt.Println("Connected to PostgreSQL database")
 
 	// Initialize dependencies
-	store := storage.NewPostgresStorage(db)
+	store := storage.NewPostgresStorage(db, cfg)
 
 	// Run migrations
 	migrationsPath := "migrations"
@@ -94,7 +94,7 @@ func main() {
 	defer cancel()
 
 	// Start Background Worker (Automatic Analysis)
-	worker := correlator.NewWorker(engine)
+	worker := correlator.NewWorker(engine, cfg.Worker.PollingIntervalDur)
 	go worker.Start(ctx)
 
 	// Start Retention Worker

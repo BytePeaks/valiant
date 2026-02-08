@@ -1,5 +1,10 @@
 import { MetricInfo } from '@/components/promql-modal';
 
+export interface ContextualLink {
+  name: string;
+  url: string;
+}
+
 export interface ChangeEvent {
   id: string;
   source: string; // Deprecated in favor of trigger_type
@@ -11,6 +16,7 @@ export interface ChangeEvent {
   summary: string;
   metadata: Record<string, string>;
   analysis_status?: 'pending' | 'ready' | 'completed';
+  contextual_links?: ContextualLink[]; // New field for generated deep links
 }
 
 export interface MetricValues {

@@ -7,17 +7,19 @@ import (
 )
 
 type Worker struct {
-	engine *Engine
+	engine          *Engine
+	pollingInterval time.Duration
 }
 
-func NewWorker(e *Engine) *Worker {
+func NewWorker(e *Engine, pollingInterval time.Duration) *Worker {
 	return &Worker{
-		engine: e,
+		engine:          e,
+		pollingInterval: pollingInterval,
 	}
 }
 
 func (w *Worker) Start(ctx context.Context) {
-	ticker := time.NewTicker(5 * time.Minute)
+	ticker := time.NewTicker(w.pollingInterval)
 	defer ticker.Stop()
 
 	log.Println("Starting background analysis worker...")
