@@ -19,12 +19,12 @@ func TestAdditionalMetrics_ScoredWithCoreMetrics(t *testing.T) {
 	require.NoError(t, err)
 	defer shared.CleanupTestDB(db, schemaName)
 
-	store := storage.NewPostgresStorage(db)
-	mockMetrics := shared.NewMockMetricsProvider()
-
 	cfg := &config.Config{}
 	cfg.Analysis.BaselineDur = 30 * time.Minute
 	cfg.Analysis.ImpactDur = 30 * time.Minute
+
+	store := storage.NewPostgresStorage(db, cfg)
+	mockMetrics := shared.NewMockMetricsProvider()
 	cfg.Prometheus.AdditionalMetrics = []config.PrometheusMetric{
 		{Name: "custom_error_count", Query: "sum(rate(custom_errors_total[5m]))"},
 	}
@@ -77,12 +77,12 @@ func TestAdditionalMetrics_MissingInImpact(t *testing.T) {
 	require.NoError(t, err)
 	defer shared.CleanupTestDB(db, schemaName)
 
-	store := storage.NewPostgresStorage(db)
-	mockMetrics := shared.NewMockMetricsProvider()
-
 	cfg := &config.Config{}
 	cfg.Analysis.BaselineDur = 30 * time.Minute
 	cfg.Analysis.ImpactDur = 30 * time.Minute
+
+	store := storage.NewPostgresStorage(db, cfg)
+	mockMetrics := shared.NewMockMetricsProvider()
 
 	eventTimestamp := time.Now().Add(-2 * time.Hour)
 	endTime := time.Now().Add(-90 * time.Minute)
@@ -127,12 +127,12 @@ func TestAdditionalMetrics_NewInImpact(t *testing.T) {
 	require.NoError(t, err)
 	defer shared.CleanupTestDB(db, schemaName)
 
-	store := storage.NewPostgresStorage(db)
-	mockMetrics := shared.NewMockMetricsProvider()
-
 	cfg := &config.Config{}
 	cfg.Analysis.BaselineDur = 30 * time.Minute
 	cfg.Analysis.ImpactDur = 30 * time.Minute
+
+	store := storage.NewPostgresStorage(db, cfg)
+	mockMetrics := shared.NewMockMetricsProvider()
 
 	eventTimestamp := time.Now().Add(-2 * time.Hour)
 	endTime := time.Now().Add(-90 * time.Minute)

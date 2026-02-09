@@ -19,13 +19,14 @@ func TestImpactScoring_LevelClassification(t *testing.T) {
 		require.NoError(t, err)
 		defer shared.CleanupTestDB(db, schemaName)
 
-		storage := shared.NewTestPostgresStorage(db)
-		mockMetrics := shared.NewMockMetricsProvider()
-		baseline, impact := metricsFunc()
-
 		cfg := &config.Config{}
 		cfg.Analysis.BaselineDur = 30 * time.Minute
 		cfg.Analysis.ImpactDur = 30 * time.Minute
+		cfg.Analysis.IntentExecutionCorrelationDur = 1 * time.Hour
+
+		storage := shared.NewTestPostgresStorage(db, cfg)
+		mockMetrics := shared.NewMockMetricsProvider()
+		baseline, impact := metricsFunc()
 
 		// Set event timestamp far enough in the past so the impact window is already closed.
 		// With EndTime at -90m and ImpactDur of 30m, the impact window ends at -90m + 5m + 30m = -55m (in the past). OK.

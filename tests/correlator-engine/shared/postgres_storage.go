@@ -3,6 +3,7 @@ package shared
 import (
 	"context"
 	"database/sql"
+	"valiant/internal/config"
 	"valiant/internal/domain"
 	"valiant/internal/storage"
 	"time"
@@ -14,9 +15,9 @@ type TestPostgresStorage struct {
 }
 
 // NewTestPostgresStorage creates a new TestPostgresStorage instance.
-func NewTestPostgresStorage(db *sql.DB) *TestPostgresStorage {
+func NewTestPostgresStorage(db *sql.DB, cfg *config.Config) *TestPostgresStorage {
 	return &TestPostgresStorage{
-		PostgresStorage: storage.NewPostgresStorage(db),
+		PostgresStorage: storage.NewPostgresStorage(db, cfg),
 	}
 }
 

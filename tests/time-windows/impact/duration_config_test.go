@@ -4,9 +4,9 @@ import (
 	"context"
 	"testing"
 	"time"
-	"valiant/internal/config"
 	"valiant/internal/correlator"
 	"valiant/internal/storage"
+	"valiant/tests/common"
 	"valiant/tests/time-windows/shared"
 	"github.com/stretchr/testify/require"
 )
@@ -17,7 +17,13 @@ func TestConfigurableImpactDuration(t *testing.T) {
 	require.NoError(t, err)
 	defer shared.CleanupTestDB(db, schemaName)
 
-	storage := storage.NewPostgresStorage(db)
+	cfg := common.SampleConfig()
+	// Use a custom duration for the impact window
+	customImpactDur := 1 * time.Hour
+	cfg.Analysis.ImpactDur = customImpactDur
+	cfg.Analysis.ImpactWindow = customImpactDur.String() // Also update the string representation
+
+	storage := storage.NewPostgresStorage(db, cfg)
 	mockMetrics := &shared.MockMetricsProvider{}
 
 	eventTimestamp := time.Now().Add(-10 * time.Hour) // A sufficiently old event
@@ -29,13 +35,6 @@ func TestConfigurableImpactDuration(t *testing.T) {
 
 	err = storage.SaveChangeEvent(context.Background(), event)
 	require.NoError(t, err)
-
-	// Use a custom duration for the impact window
-	customImpactDur := 1 * time.Hour
-	
-	cfg := &config.Config{}
-	cfg.Analysis.BaselineDur = 30 * time.Minute
-	cfg.Analysis.ImpactDur = customImpactDur
 
 	engine := correlator.NewEngine(storage, mockMetrics, cfg)
 

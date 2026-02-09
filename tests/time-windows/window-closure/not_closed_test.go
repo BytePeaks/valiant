@@ -4,9 +4,9 @@ import (
 	"context"
 	"testing"
 	"time"
-	"valiant/internal/config"
 	"valiant/internal/correlator"
 	"valiant/internal/storage"
+	"valiant/tests/common"
 	"valiant/tests/time-windows/shared"
 	"github.com/stretchr/testify/require"
 )
@@ -17,7 +17,8 @@ func TestImpactWindow_NotClosedError(t *testing.T) {
 	require.NoError(t, err)
 	defer shared.CleanupTestDB(db, schemaName)
 
-	storage := storage.NewPostgresStorage(db)
+	cfg := common.SampleConfig()
+	storage := storage.NewPostgresStorage(db, cfg)
 	mockMetrics := &shared.MockMetricsProvider{}
 
 	// Event happened very recently, so its impact window is still open
@@ -30,10 +31,6 @@ func TestImpactWindow_NotClosedError(t *testing.T) {
 
 	err = storage.SaveChangeEvent(context.Background(), event)
 	require.NoError(t, err)
-
-	cfg := &config.Config{}
-	cfg.Analysis.BaselineDur = 30 * time.Minute
-	cfg.Analysis.ImpactDur = 30 * time.Minute
 
 	engine := correlator.NewEngine(storage, mockMetrics, cfg)
 

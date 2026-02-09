@@ -2,6 +2,7 @@ package common
 
 import (
 	"time"
+	"valiant/internal/config"
 	"valiant/internal/domain"
 )
 
@@ -45,6 +46,50 @@ func SampleCIEvent() domain.ChangeEvent {
 	}
 }
 
+
+
+// SampleConfig returns a fully populated config.Config object with sensible defaults for testing purposes.
+func SampleConfig() *config.Config {
+	cfg := &config.Config{
+		DatabaseURL: "postgres://user:password@localhost:5432/valiant_test?sslmode=disable",
+		Port:        "8080",
+		Prometheus: config.PrometheusConfig{
+			URL: "http://localhost:9090",
+			Queries: map[string]string{
+				"error_rate":     `avg_over_time(sum(rate(http_requests_total{service=~"{{ .Services }}",status=~"5.."}[1m]))[{{ .Duration }}])`,
+				"latency_p95_ms": `avg_over_time(histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{service=~"{{ .Services }}"}[1m])))[{{ .Duration }}])`,
+				"rps":            `avg_over_time(sum(rate(http_requests_total{service=~"{{ .Services }}"}[1m]))[{{ .Duration }}])`,
+				"cpu":            `avg_over_time(sum(rate(container_cpu_usage_seconds_total{container=~"{{ .Services }}"}[1m]))[{{ .Duration }}])`,
+				"memory":         `avg_over_over(sum(container_memory_usage_bytes{container=~"{{ .Services }}"})[{{ .Duration }}])`,
+			},
+		},
+	}
+	cfg.Retention.EventTTL = "90d"
+	cfg.Retention.CleanupInterval = "1h"
+	cfg.Analysis.BaselineWindow = "30m"
+	cfg.Analysis.ImpactWindow = "30m"
+	cfg.Analysis.IntentExecutionCorrelationWindow = "1h"
+	cfg.Analysis.WeightsBuiltIn = map[string]float64{
+		"error_rate":     0.4,
+		"latency_p95_ms": 0.3,
+		"cpu":            0.1,
+		"memory":         0.1,
+		"rps":            0.1,
+	}
+	cfg.Analysis.WeightsCustom = map[string]float64{}
+	cfg.Worker.PollingInterval = "5m" // Default worker polling interval
+
+	// Parse durations - these would normally be done by config.Load, but we do it manually for test config
+	cfg.Analysis.BaselineDur, _ = time.ParseDuration(cfg.Analysis.BaselineWindow)
+	cfg.Analysis.ImpactDur, _ = time.ParseDuration(cfg.Analysis.ImpactWindow)
+	cfg.Analysis.IntentExecutionCorrelationDur, _ = time.ParseDuration(cfg.Analysis.IntentExecutionCorrelationWindow)
+	cfg.Retention.EventTTLDur, _ = time.ParseDuration(cfg.Retention.EventTTL) // Simplified for test, assumes valid
+	cfg.Retention.CleanupIntervalDur, _ = time.ParseDuration(cfg.Retention.CleanupInterval)
+	cfg.Worker.PollingIntervalDur, _ = time.ParseDuration(cfg.Worker.PollingInterval)
+
+	return cfg
+}
+
 // SampleMetricValues creates test metric values
 func SampleMetricValues(errorRate, latencyP95, rps, cpu, memory float64) domain.MetricValues {
 	return domain.MetricValues{
@@ -82,4 +127,27 @@ func HighImpactMetrics() (baseline, impact domain.MetricValues) {
 	baseline = SampleMetricValues(0.01, 100, 100, 50, 60)
 	impact = SampleMetricValues(0.50, 500, 50, 90, 85) // 49% error increase + severe latency
 	return
+}
+
+// SampleConfigWithLinking creates a config with pre-defined linking templates for testing.
+func SampleConfigWithLinking() *config.Config {
+	return &config.Config{
+		Linking: []config.LinkTemplate{
+			{
+				Name:        "View Commit",
+				MetadataHas: []string{"git_commit_sha", "repository_url"},
+				URLTemplate: "{{.repository_url}}/commit/{{.git_commit_sha}}",
+			},
+			{
+				Name:        "View Jenkins Build",
+				MetadataHas: []string{"jenkins_url", "jenkins_job_name", "jenkins_build_id"},
+				URLTemplate: "{{.jenkins_url}}/job/{{.jenkins_job_name}}/{{.jenkins_build_id}}",
+			},
+			{
+				Name:        "Open ArgoCD App",
+				MetadataHas: []string{"argocd_url", "argocd_app_name"},
+				URLTemplate: "{{.argocd_url}}/applications/{{.argocd_app_name}}",
+			},
+		},
+	}
 }

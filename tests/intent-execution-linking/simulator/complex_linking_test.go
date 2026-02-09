@@ -17,7 +17,10 @@ func TestMultipleExecutions_SingleCIEvent(t *testing.T) {
 	require.NoError(t, err)
 	defer shared.CleanupTestDB(db, schemaName)
 
-	store := storage.NewPostgresStorage(db)
+	cfg := &config.Config{}
+	cfg.Analysis.IntentExecutionCorrelationDur = 2 * time.Hour
+
+	store := storage.NewPostgresStorage(db, cfg)
 	mockMetrics := &shared.MockMetricsProvider{}
 
 	sha := "multi-exec-sha-123"
@@ -28,9 +31,6 @@ func TestMultipleExecutions_SingleCIEvent(t *testing.T) {
 
 	err = store.SaveChangeEvent(context.Background(), ciEvent)
 	require.NoError(t, err)
-
-	cfg := &config.Config{}
-	cfg.Analysis.IntentExecutionCorrelationDur = 2 * time.Hour
 
 	// Two execution events referencing the same CI event SHA
 	for i, id := range []string{"exec-staging", "exec-prod"} {
@@ -56,7 +56,10 @@ func TestCIEvent_BothSHAAndImageTag(t *testing.T) {
 	require.NoError(t, err)
 	defer shared.CleanupTestDB(db, schemaName)
 
-	store := storage.NewPostgresStorage(db)
+	cfg := &config.Config{}
+	cfg.Analysis.IntentExecutionCorrelationDur = 2 * time.Hour
+
+	store := storage.NewPostgresStorage(db, cfg)
 	mockMetrics := &shared.MockMetricsProvider{}
 
 	sha := "dual-meta-sha"
@@ -71,9 +74,6 @@ func TestCIEvent_BothSHAAndImageTag(t *testing.T) {
 
 	err = store.SaveChangeEvent(context.Background(), ciEvent)
 	require.NoError(t, err)
-
-	cfg := &config.Config{}
-	cfg.Analysis.IntentExecutionCorrelationDur = 2 * time.Hour
 
 	// Execution event matching by SHA only
 	execEvent := shared.SampleChangeEvent()
@@ -103,13 +103,13 @@ func TestCIEventArrivesAfterExecution(t *testing.T) {
 	require.NoError(t, err)
 	defer shared.CleanupTestDB(db, schemaName)
 
-	store := storage.NewPostgresStorage(db)
-	mockMetrics := &shared.MockMetricsProvider{}
-
-	sha := "late-ci-sha"
-
 	cfg := &config.Config{}
 	cfg.Analysis.IntentExecutionCorrelationDur = 2 * time.Hour
+
+	store := storage.NewPostgresStorage(db, cfg)
+	mockMetrics := &shared.MockMetricsProvider{}
+
+	sha := "late-arrival-sha-456"
 
 	// Save execution event first
 	execEvent := shared.SampleChangeEvent()

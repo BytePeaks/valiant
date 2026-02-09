@@ -20,12 +20,12 @@ func TestMultipleChanges_RankedByLikelihood(t *testing.T) {
 	require.NoError(t, err)
 	defer shared.CleanupTestDB(db, schemaName)
 
-	store := storage.NewPostgresStorage(db)
-	mockMetrics := shared.NewMockMetricsProvider()
-
 	cfg := &config.Config{}
 	cfg.Analysis.BaselineDur = 30 * time.Minute
 	cfg.Analysis.ImpactDur = 30 * time.Minute
+
+	store := storage.NewPostgresStorage(db, cfg)
+	mockMetrics := shared.NewMockMetricsProvider()
 
 	baseTime := time.Now().Add(-3 * time.Hour)
 
@@ -105,12 +105,12 @@ func TestCascadeScenario_CrossServiceImpact(t *testing.T) {
 	require.NoError(t, err)
 	defer shared.CleanupTestDB(db, schemaName)
 
-	store := storage.NewPostgresStorage(db)
-	mockMetrics := shared.NewMockMetricsProvider()
-
 	cfg := &config.Config{}
 	cfg.Analysis.BaselineDur = 30 * time.Minute
 	cfg.Analysis.ImpactDur = 30 * time.Minute
+
+	store := storage.NewPostgresStorage(db, cfg)
+	mockMetrics := shared.NewMockMetricsProvider()
 
 	baseTime := time.Now().Add(-3 * time.Hour)
 
@@ -158,12 +158,12 @@ func TestHighVolume_ManyEvents(t *testing.T) {
 	require.NoError(t, err)
 	defer shared.CleanupTestDB(db, schemaName)
 
-	store := storage.NewPostgresStorage(db)
-	mockMetrics := shared.NewMockMetricsProvider()
-
 	cfg := &config.Config{}
 	cfg.Analysis.BaselineDur = 30 * time.Minute
 	cfg.Analysis.ImpactDur = 30 * time.Minute
+
+	store := storage.NewPostgresStorage(db, cfg)
+	mockMetrics := shared.NewMockMetricsProvider()
 
 	baseTime := time.Now().Add(-5 * time.Hour)
 	baseline := shared.SampleMetricValues(0.01, 100, 100, 50, 60)
