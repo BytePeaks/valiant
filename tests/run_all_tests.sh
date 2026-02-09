@@ -28,6 +28,8 @@ SUITES=(
     "intent-execution-linking"
     "time-windows"
     "kubernetes-collector"
+    "deep-linking"
+    "timestamp-guardrail" # Added new test suite
 )
 
 BACKEND_UNIT_TEST_NAME="backend-unit-tests"
