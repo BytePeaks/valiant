@@ -45,6 +45,11 @@ Impact scores, metric shifts (baseline vs impact), confidence scoring, and orpha
 ![Custom Metrics](docs/images/service_analytics_custom_metrics.png)
 Define business-specific PromQL queries in `config.yaml` (e.g., orders/min, payment failures). Toggle visibility per service.
 
+### Deeplinking of intent
+![Deeplinking](docs/images/deeplinks.png)   
+Instantly navigate from a change event to its origin in external systems like `Git repositories`, `CI/CD pipelines` etc.
+> Configurable templates use event metadata to generate clickable links, providing immediate context and accelerating incident investigation.
+
 ---
 
 ## Key Features
