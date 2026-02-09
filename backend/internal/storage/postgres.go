@@ -152,6 +152,58 @@ func (s *PostgresStorage) SaveChangeEvent(ctx context.Context, event domain.Chan
 	return nil
 }
 
+// generateContextualLinks creates deep links for a change event based on configured templates.
+func (s *PostgresStorage) generateContextualLinks(event domain.ChangeEvent) []domain.ContextualLink {
+	var links []domain.ContextualLink
+
+	for _, tpl := range s.config.Linking {
+		// Check if all required metadata keys are present
+		hasAllKeys := true
+		for _, key := range tpl.MetadataHas {
+			if _, ok := event.Metadata[key]; !ok {
+				hasAllKeys = false
+				break
+			}
+			// Additionally, check if the value for the key is not an empty string
+			if event.Metadata[key] == "" {
+				hasAllKeys = false
+				break
+			}
+		}
+
+		if !hasAllKeys {
+			continue
+		}
+
+		// Execute the template
+		t, err := template.New(tpl.Name).Parse(tpl.URLTemplate)
+		if err != nil {
+			fmt.Printf("Error parsing link template '%s': %v\n", tpl.Name, err)
+			continue
+		}
+
+		var buf bytes.Buffer
+		if err := t.Execute(&buf, event.Metadata); err != nil {
+			fmt.Printf("Error executing link template '%s': %v\n", tpl.Name, err)
+			continue
+		}
+
+		generatedURL := buf.String()
+		// If the template rendered "<no value>", it means a key was missing or empty, so skip this link.
+		if strings.Contains(generatedURL, "<no value>") || generatedURL == "" {
+			fmt.Printf("Skipping link '%s' due to missing metadata key or empty value in template: %s\n", tpl.Name, generatedURL)
+			continue
+		}
+
+		links = append(links, domain.ContextualLink{
+			Name: tpl.Name,
+			URL:  generatedURL,
+		})
+	}
+
+	return links
+}
+
 func (s *PostgresStorage) GetChangeEvents(ctx context.Context, filters map[string]interface{}) ([]domain.ChangeEvent, int, error) {
 	var args []interface{}
 	var whereClauses []string
@@ -288,6 +340,11 @@ func (s *PostgresStorage) GetChangeEvents(ctx context.Context, filters map[strin
 		events = append(events, event)
 	}
 
+	// Populate ContextualLinks for all retrieved events
+	for i := range events {
+		events[i].ContextualLinks = s.generateContextualLinks(events[i])
+	}
+
 	return events, total, nil
 }
 
@@ -351,6 +408,8 @@ func (s *PostgresStorage) GetChangeEventByID(ctx context.Context, id string) (do
 	if err := json.Unmarshal(metadataJSON, &event.Metadata); err != nil {
 		return domain.ChangeEvent{}, fmt.Errorf("failed to unmarshal metadata: %w", err)
 	}
+
+	event.ContextualLinks = s.generateContextualLinks(event)
 
 	return event, nil
 }
@@ -428,46 +487,7 @@ func (s *PostgresStorage) GetEventsPendingAnalysis(ctx context.Context) ([]domai
 		}
 		event.AffectedServices = []string(affectedServices)
 		json.Unmarshal(metadataJSON, &event.Metadata)
-
-		// Generate ContextualLinks based on config
-		for _, linkTmpl := range s.config.Linking {
-			allMetadataPresent := true
-			for _, key := range linkTmpl.MetadataHas {
-				if _, ok := event.Metadata[key]; !ok {
-					allMetadataPresent = false
-					break
-				}
-			}
-
-			if allMetadataPresent {
-				tmpl, err := template.New(linkTmpl.Name).Parse(linkTmpl.URLTemplate)
-				if err != nil {
-					// Log error but continue processing other links
-					fmt.Printf("Error parsing link template '%s': %v\n", linkTmpl.Name, err)
-					continue
-				}
-
-				var tplBuffer bytes.Buffer
-				if err := tmpl.Execute(&tplBuffer, event.Metadata); err != nil {
-					// Log error but continue processing other links
-					fmt.Printf("Error executing link template '%s': %v\n", linkTmpl.Name, err)
-					continue
-				}
-
-				generatedURL := tplBuffer.String()
-				// If the template rendered "<no value>", it means a key was missing, so skip this link.
-				if strings.Contains(generatedURL, "<no value>") {
-					fmt.Printf("Skipping link '%s' due to missing metadata key in template: %s\n", linkTmpl.Name, generatedURL)
-					continue
-				}
-
-				event.ContextualLinks = append(event.ContextualLinks, domain.ContextualLink{
-					Name: linkTmpl.Name,
-					URL:  generatedURL,
-				})
-			}
-		}
-
+		event.ContextualLinks = s.generateContextualLinks(event)
 		events = append(events, event)
 	}
 

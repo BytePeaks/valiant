@@ -1,6 +1,6 @@
 
 import { useState, useEffect } from 'react';
-import { Clock, Zap, GitBranch, Box, Bot, Info, Hourglass, Loader2, Tag, ShieldCheck, Settings2, Activity } from 'lucide-react';
+import { Clock, Zap, GitBranch, Box, Bot, Info, Hourglass, Loader2, Tag, ShieldCheck, Settings2, Activity, ExternalLink } from 'lucide-react';
 import { timeAgo, getImpactColor } from '../../lib/utils';
 import type { ChangeEvent, ImpactAnalysis, TimelineEventProps } from '../../lib/api';
 import type { MetricInfo } from '../promql-modal';
@@ -253,6 +253,29 @@ export default function TimelineEvent({ event }: TimelineEventProps) {
                 );
               })}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Contextual Links Section */}
+      {((analysis?.change_event?.contextual_links?.length ?? 0) > 0 || (event.contextual_links?.length ?? 0) > 0) && (
+        <div className="mt-6 pt-6 border-t border-gray-100 animate-in fade-in slide-in-from-top-2 duration-300">
+          <h4 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3">
+            Contextual Links
+          </h4>
+          <div className="flex flex-wrap gap-2">
+            {((analysis && analysis.change_event.contextual_links) || event.contextual_links)?.map((link, idx) => (
+              <a
+                key={idx}
+                href={link.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-2 px-3 py-1 bg-blue-100 text-blue-800 text-xs font-semibold rounded-full hover:bg-blue-200 transition-colors shadow-sm"
+              >
+                <ExternalLink className="w-3 h-3" />
+                {link.name}
+              </a>
+            ))}
           </div>
         </div>
       )}

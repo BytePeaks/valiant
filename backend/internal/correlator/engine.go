@@ -164,9 +164,8 @@ var changeTypeWeights = map[string]float64{
 // by their likelihood of causing degradation.
 func (e *Engine) RankChanges(ctx context.Context, service string, from, to time.Time) ([]domain.RankedChange, error) {
 	events, _, err := e.storage.GetChangeEvents(ctx, map[string]interface{}{
-		"services_any_of": []string{service},
-		"from_timestamp":  from,
-		"to_timestamp":    to,
+		"from_timestamp": from,
+		"to_timestamp":   to,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch events for ranking: %w", err)
