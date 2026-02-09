@@ -151,6 +151,31 @@ If an analysis already exists for an event, the engine returns the cached snapsh
 
 ---
 
+## Contextual Deep Linking
+
+Valiant's contextual deep linking feature enhances traceability by allowing you to navigate directly from a change event in the UI to its original source in external systems, such as Git repositories, CI/CD pipelines, or deployment dashboards. This is achieved by generating clickable URLs based on metadata you provide in change events and templates defined in your `config.yaml`.
+
+### How it Works
+
+1.  **Metadata from Event Payload:** When you send a `ChangeEvent` to Valiant's API (e.g., via `curl`), you include relevant key-value pairs in the `metadata` field (e.g., `git_commit_sha`, `repository_url`, `jenkins_build_id`, `argocd_app_name`).
+2.  **Configured Link Templates:** In your `config.yaml`, you define `linking` templates. Each template specifies:
+    *   **`name`**: The text displayed for the link in the UI.
+    *   **`metadata_has`**: A list of metadata keys that *must* be present in the event's metadata for this specific link to be generated. This ensures only valid, actionable links are created.
+    *   **`url_template`**: A Go template string that uses the event's metadata to construct the full URL (e.g., `{{ .repository_url }}/commit/{{ .git_commit_sha }}`).
+3.  **Backend Generation:** The Valiant backend processes incoming events. For each event, it attempts to match its metadata against your configured link templates. If a template's `metadata_has` conditions are met, the `url_template` is executed, and a clickable link is generated.
+4.  **Frontend Display:** The generated links are included in the API response and displayed in the Valiant UI as prominent, pill-style buttons within the event details.
+
+### Enabling Deep Links for Your System
+
+To utilize this feature, you need to:
+
+1.  **Configure Link Templates:** Add a `linking` section to your `config.yaml` with templates appropriate for your external systems (e.g., GitHub, GitLab, Jenkins, ArgoCD). See the [Configuration](configuration.md) documentation for detailed examples.
+2.  **Send Rich Metadata:** Ensure your CI/CD pipelines or scripts include the necessary metadata keys (as required by your templates) in the `metadata` field of the `ChangeEvent` payload when calling Valiant's `POST /api/v1/events` endpoint.
+
+This flexible approach allows you to integrate Valiant with any system where you can extract relevant URL components into event metadata, without requiring Valiant to directly integrate with or monitor those systems.
+
+---
+
 ## Custom Metrics
 
 Beyond the five core metrics, you can define **additional metrics** in `config.yaml` using custom PromQL queries:
