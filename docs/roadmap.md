@@ -18,6 +18,8 @@ Current status of features and planned work for Valiant.
 - **Automatic Background Analysis** - Worker triggers analysis when impact windows close
 - **Event Retention Policy** - Configurable TTL with automatic cleanup
 - **Intent-Execution Linking** - Links CI events to K8s rollouts via shared `git_commit_sha` or `image_tag`
+- **Timestamp Guardrail for Event Ingestion** - Prevents `ChangeEvent`s with future timestamps from entering the analysis workflow, marking them as invalid for auditability and preventing premature analysis. Also, made analysis worker polling interval configurable.
+- **Contextual Deep Linking** - Dynamic generation of clickable links to external systems (e.g., Git, CI/CD) from event metadata, configurable via `LinkTemplate`s.
 - **Full UI** - Dashboard timeline, service analytics, metric preferences, search, namespace/type filters
 
 ---
@@ -34,6 +36,7 @@ Current status of features and planned work for Valiant.
 ## Planned
 
 - **Git Collector** - Direct collection of tags, releases, and merges from Git repositories
+- **Github Actions** - Prepare Github actions for automatic checking PR and commits.
 - **Markdown Metadata** - Render metadata URLs as clickable links (GitHub commits, ArgoCD UI)
 - **Service Health Summary** - "Pulse" indicator on the homepage based on last known analysis score
 - **Event Search Improvements** - Search by Git SHA and metadata values
