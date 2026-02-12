@@ -11,7 +11,7 @@ type Storage interface {
 	SaveChangeEvent(ctx context.Context, event domain.ChangeEvent) error
 	GetChangeEvents(ctx context.Context, filters map[string]interface{}) ([]domain.ChangeEvent, int, error)
 	GetChangeEventByID(ctx context.Context, id string) (domain.ChangeEvent, error)
-	GetServices(ctx context.Context, namespace string) ([]string, error)
+	GetServices(ctx context.Context, namespace string, linkedOnly bool) ([]string, error)
 	GetNamespaces(ctx context.Context) ([]string, error)
 	GetEventsPendingAnalysis(ctx context.Context) ([]domain.ChangeEvent, error)
 

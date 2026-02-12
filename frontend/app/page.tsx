@@ -119,6 +119,7 @@ export default function Home() {
         ...(search ? { search } : {}),
         ...(from ? { from: new Date(from).toISOString() } : {}),
         ...(to ? { to: new Date(to).toISOString() } : {}),
+        linked_only: true,
       },
       controller.signal
     )
@@ -145,7 +146,7 @@ export default function Home() {
 
   // Re-fetch services when namespace changes (filter services by selected namespace)
   useEffect(() => {
-    fetchServices(selectedNamespace ?? undefined).then((servicesData) => {
+    fetchServices(selectedNamespace ?? undefined, true).then((servicesData) => {
       setServices(servicesData);
       // Clear selected service if it's no longer available in this namespace
       if (selectedService && !servicesData.includes(selectedService)) {

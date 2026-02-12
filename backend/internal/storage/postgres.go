@@ -107,8 +107,8 @@ func (s *PostgresStorage) SaveChangeEvent(ctx context.Context, event domain.Chan
 	}
 
 	query := `
-		INSERT INTO change_events (id, source, trigger_type, execution_id, change_type, timestamp, end_time, affected_services, metadata, summary, status, invalid_reason, skew_seconds, blast_radius)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+		INSERT INTO change_events (id, source, trigger_type, execution_id, change_type, timestamp, end_time, affected_services, metadata, summary, status, invalid_reason, skew_seconds, blast_radius, is_intent, is_execution)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
 		ON CONFLICT (id) DO UPDATE SET
 			source = EXCLUDED.source,
 			trigger_type = EXCLUDED.trigger_type,
@@ -122,7 +122,9 @@ func (s *PostgresStorage) SaveChangeEvent(ctx context.Context, event domain.Chan
 			status = EXCLUDED.status,
 			invalid_reason = EXCLUDED.invalid_reason,
 			skew_seconds = EXCLUDED.skew_seconds,
-			blast_radius = EXCLUDED.blast_radius
+			blast_radius = EXCLUDED.blast_radius,
+			is_intent = EXCLUDED.is_intent,
+			is_execution = EXCLUDED.is_execution
 	`
 
 	metadataJSON, err := json.Marshal(event.Metadata)
@@ -153,6 +155,8 @@ func (s *PostgresStorage) SaveChangeEvent(ctx context.Context, event domain.Chan
 		sql.NullString{String: event.InvalidReason, Valid: event.InvalidReason != ""},
 		sql.NullInt32{Int32: int32(event.SkewSeconds), Valid: event.SkewSeconds != 0},
 		blastRadiusJSON,
+		event.IsIntent,
+		event.IsExecution,
 	)
 
 	if err != nil {
@@ -265,6 +269,19 @@ func (s *PostgresStorage) GetChangeEvents(ctx context.Context, filters map[strin
 		args = append(args, pq.Array(services))
 		argCount++
 	}
+	if isExecutionOnly, ok := filters["is_execution_only"].(bool); ok && isExecutionOnly {
+		whereClauses = append(whereClauses, "is_execution = TRUE")
+	}
+	if isIntentOnly, ok := filters["is_intent_only"].(bool); ok && isIntentOnly {
+		whereClauses = append(whereClauses, "is_intent = TRUE")
+	}
+	if linkedOnly, ok := filters["linked_only"].(bool); ok && linkedOnly {
+		whereClauses = append(whereClauses, `is_execution = TRUE AND EXISTS (
+			SELECT 1 FROM event_links el
+			WHERE el.execution_event_id = change_events.id
+			AND el.link_type IN ('sha_match', 'image_tag_match')
+		)`)
+	}
 
 	whereSQL := ""
 	if len(whereClauses) > 0 {
@@ -292,7 +309,7 @@ func (s *PostgresStorage) GetChangeEvents(ctx context.Context, filters map[strin
 	}
 
 	selectQuery := `
-		SELECT id, source, trigger_type, execution_id, change_type, timestamp, end_time, affected_services, metadata, summary, status, invalid_reason, skew_seconds, blast_radius
+		SELECT id, source, trigger_type, execution_id, change_type, timestamp, end_time, affected_services, metadata, summary, status, invalid_reason, skew_seconds, blast_radius, is_intent, is_execution
 		FROM change_events` + whereSQL + fmt.Sprintf(`
 		ORDER BY timestamp DESC
 		LIMIT %d OFFSET %d`, limit, offset)
@@ -312,6 +329,7 @@ func (s *PostgresStorage) GetChangeEvents(ctx context.Context, filters map[strin
 		var endTime sql.NullTime
 		var skewSeconds sql.NullInt32
 		var blastRadiusJSON sql.NullString
+		var isIntent, isExecution sql.NullBool
 
 		err := rows.Scan(
 			&event.ID,
@@ -328,6 +346,8 @@ func (s *PostgresStorage) GetChangeEvents(ctx context.Context, filters map[strin
 			&invalidReason,
 			&skewSeconds,
 			&blastRadiusJSON,
+			&isIntent,
+			&isExecution,
 		)
 		if err != nil {
 			return nil, 0, fmt.Errorf("failed to scan change event: %w", err)
@@ -343,6 +363,8 @@ func (s *PostgresStorage) GetChangeEvents(ctx context.Context, filters map[strin
 		event.Status = status.String
 		event.InvalidReason = invalidReason.String
 		event.SkewSeconds = int(skewSeconds.Int32)
+		event.IsIntent = isIntent.Bool
+		event.IsExecution = isExecution.Bool
 
 		event.AffectedServices = []string(affectedServices)
 		if err := json.Unmarshal(metadataJSON, &event.Metadata); err != nil {
@@ -377,7 +399,7 @@ func (s *PostgresStorage) DeleteChangeEventsOlderThan(ctx context.Context, cutof
 
 func (s *PostgresStorage) GetChangeEventByID(ctx context.Context, id string) (domain.ChangeEvent, error) {
 	query := `
-		SELECT id, source, trigger_type, execution_id, change_type, timestamp, end_time, affected_services, metadata, summary, status, invalid_reason, skew_seconds, blast_radius
+		SELECT id, source, trigger_type, execution_id, change_type, timestamp, end_time, affected_services, metadata, summary, status, invalid_reason, skew_seconds, blast_radius, is_intent, is_execution
 		FROM change_events
 		WHERE id = $1
 	`
@@ -389,6 +411,7 @@ func (s *PostgresStorage) GetChangeEventByID(ctx context.Context, id string) (do
 	var endTime sql.NullTime
 	var skewSeconds sql.NullInt32
 	var blastRadiusJSON sql.NullString
+	var isIntent, isExecution sql.NullBool
 
 	err := s.db.QueryRowContext(ctx, query, id).Scan(
 		&event.ID,
@@ -405,6 +428,8 @@ func (s *PostgresStorage) GetChangeEventByID(ctx context.Context, id string) (do
 		&invalidReason,
 		&skewSeconds,
 		&blastRadiusJSON,
+		&isIntent,
+		&isExecution,
 	)
 
 	if err == sql.ErrNoRows {
@@ -441,26 +466,33 @@ func (s *PostgresStorage) GetChangeEventByID(ctx context.Context, id string) (do
 
 	return event, nil
 }
-func (s *PostgresStorage) GetServices(ctx context.Context, namespace string) ([]string, error) {
-	var query string
+func (s *PostgresStorage) GetServices(ctx context.Context, namespace string, linkedOnly bool) ([]string, error) {
+	var whereClauses []string
 	var args []interface{}
+	argCount := 1
+
+	whereClauses = append(whereClauses, "affected_services IS NOT NULL")
 
 	if namespace != "" {
-		query = `
-			SELECT DISTINCT unnest(affected_services) as service
-			FROM change_events
-			WHERE affected_services IS NOT NULL AND metadata ->> 'env' = $1
-			ORDER BY service ASC
-		`
+		whereClauses = append(whereClauses, fmt.Sprintf("metadata ->> 'env' = $%d", argCount))
 		args = append(args, namespace)
-	} else {
-		query = `
-			SELECT DISTINCT unnest(affected_services) as service
-			FROM change_events
-			WHERE affected_services IS NOT NULL
-			ORDER BY service ASC
-		`
+		argCount++
 	}
+
+	if linkedOnly {
+		whereClauses = append(whereClauses, `is_execution = TRUE AND EXISTS (
+			SELECT 1 FROM event_links el
+			WHERE el.execution_event_id = change_events.id
+			AND el.link_type IN ('sha_match', 'image_tag_match')
+		)`)
+	}
+
+	query := fmt.Sprintf(`
+		SELECT DISTINCT unnest(affected_services) as service
+		FROM change_events
+		WHERE %s
+		ORDER BY service ASC
+	`, strings.Join(whereClauses, " AND "))
 
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {

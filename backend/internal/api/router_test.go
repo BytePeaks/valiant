@@ -39,7 +39,7 @@ func (m *MockStorage) GetChangeEventByID(ctx context.Context, id string) (domain
 	}
 	return domain.ChangeEvent{}, nil
 }
-func (m *MockStorage) GetServices(ctx context.Context, namespace string) ([]string, error) { return nil, nil }
+func (m *MockStorage) GetServices(ctx context.Context, namespace string, linkedOnly bool) ([]string, error) { return nil, nil }
 func (m *MockStorage) GetEventsPendingAnalysis(ctx context.Context) ([]domain.ChangeEvent, error) {
 	return nil, nil
 }

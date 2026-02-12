@@ -13,6 +13,8 @@ type ChangeEvent struct {
 	ID               string            `json:"id"`
 	Source           string            `json:"source"`             // DEPRECATED: Use TriggerType. e.g. "kubernetes", "ci-cd"
 	TriggerType      string            `json:"trigger_type"`       // "CI", "GitOps", "manual"
+	IsIntent         bool              `json:"is_intent"`          // True if this event is an 'intent' (e.g., CI build)
+	IsExecution      bool              `json:"is_execution"`       // True if this event is an 'execution' (e.g., K8s rollout)
 	ExecutionID      string            `json:"execution_id"`       // Unique ID of the execution (e.g. CI build ID, K8s UID)
 	ChangeType       string            `json:"change_type"`        // "deployment_rollout", "configmap_update", "build_success"
 	Timestamp        time.Time         `json:"timestamp"`          // Start time of the execution

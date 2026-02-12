@@ -106,12 +106,22 @@ func main() {
 	// Start Collectors
 	eventChan := make(chan domain.ChangeEvent, 100)
 
-	// Processor loop: Save events from channel
+	// Processor loop: Save events from channel and eagerly link
 	go func() {
 		for event := range eventChan {
 			log.Printf("Received event: %s (%s)", event.Summary, event.ID)
 			if err := store.SaveChangeEvent(ctx, event); err != nil {
 				log.Printf("Failed to save event: %v", err)
+				continue
+			}
+			// Eager linking for K8s-collected execution events
+			if event.IsExecution {
+				links, err := engine.CreateIntentExecutionLinks(ctx, event)
+				if err != nil {
+					log.Printf("Warning: eager linking failed for event %s: %v", event.ID, err)
+				} else if len(links) == 0 {
+					log.Printf("Orphaned execution event %s: %s (no matching CI event found)", event.ID, event.Summary)
+				}
 			}
 		}
 	}()

@@ -73,9 +73,8 @@ func (e *Engine) AnalyzeImpact(ctx context.Context, event domain.ChangeEvent) (d
 
 	analysis.Links = allLinks
 
-	// Backwards-compatible orphan detection: orphaned if no intent-execution links exist
-	isExecutionEvent := event.TriggerType == "GitOps" || event.TriggerType == "manual"
-	if isExecutionEvent {
+	// Orphan detection: orphaned if no intent-execution links exist for execution events
+	if event.IsExecution {
 		hasIntentLink := false
 		for _, link := range intentLinks {
 			if link.LinkType == "sha_match" || link.LinkType == "image_tag_match" {
@@ -84,6 +83,9 @@ func (e *Engine) AnalyzeImpact(ctx context.Context, event domain.ChangeEvent) (d
 			}
 		}
 		analysis.IsOrphaned = !hasIntentLink
+		if analysis.IsOrphaned {
+			fmt.Printf("Orphaned execution event %s: %s (no matching CI event found during analysis)\n", event.ID, event.Summary)
+		}
 	}
 
 	// Populate blast radius from the event if present
@@ -159,9 +161,8 @@ func (e *Engine) AnalyzeImpact(ctx context.Context, event domain.ChangeEvent) (d
 // CreateIntentExecutionLinks creates persistent links between execution events and CI events
 // based on git_commit_sha and image_tag metadata matches.
 func (e *Engine) CreateIntentExecutionLinks(ctx context.Context, event domain.ChangeEvent) ([]domain.EventLink, error) {
-	// Only process execution events (GitOps or manual deployments)
-	isExecutionEvent := event.TriggerType == "GitOps" || event.TriggerType == "manual"
-	if !isExecutionEvent {
+	// Only process execution events
+	if !event.IsExecution {
 		return nil, nil
 	}
 
@@ -195,18 +196,18 @@ func (e *Engine) CreateIntentExecutionLinks(ctx context.Context, event domain.Ch
 		return nil, nil // No linking metadata available
 	}
 
-	// Search for CI events within correlation window
+	// Search for intent events within correlation window
 	from := event.Timestamp.Add(-e.config.Analysis.IntentExecutionCorrelationDur)
 	to := event.Timestamp
 
 	ciEvents, _, err := e.storage.GetChangeEvents(ctx, map[string]interface{}{
-		"trigger_type":     "CI",
+		"is_intent_only":   true,
 		"from_timestamp":   from,
 		"to_timestamp":     to,
 		"metadata_has_any": metadataToLink,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to search for CI events: %w", err)
+		return nil, fmt.Errorf("failed to search for intent events: %w", err)
 	}
 
 	// Create links for matching CI events
@@ -263,6 +264,112 @@ func (e *Engine) CreateIntentExecutionLinks(ctx context.Context, event domain.Ch
 					}
 					links = append(links, link)
 				}
+			}
+		}
+	}
+
+	return links, nil
+}
+
+// LinkIntentToExecutions creates persistent links from an intent event (CI build) to
+// execution events (K8s rollouts) based on git_commit_sha and image_tag metadata matches.
+// This is the reverse of CreateIntentExecutionLinks: it searches forward from the intent
+// for matching executions within the correlation window.
+func (e *Engine) LinkIntentToExecutions(ctx context.Context, event domain.ChangeEvent) ([]domain.EventLink, error) {
+	// Only process intent events
+	if !event.IsIntent {
+		return nil, nil
+	}
+
+	// Build metadata to search for
+	metadataToLink := make(map[string]string)
+	if sha, ok := event.Metadata["git_commit_sha"]; ok && sha != "" {
+		metadataToLink["git_commit_sha"] = sha
+	}
+	if tag, ok := event.Metadata["image_tag"]; ok && tag != "" {
+		metadataToLink["image_tag"] = tag
+	}
+
+	if len(metadataToLink) == 0 {
+		return nil, nil // No linking metadata available
+	}
+
+	// Search for execution events within correlation window (forward in time from intent)
+	from := event.Timestamp
+	to := event.Timestamp.Add(e.config.Analysis.IntentExecutionCorrelationDur)
+
+	executionEvents, _, err := e.storage.GetChangeEvents(ctx, map[string]interface{}{
+		"is_execution_only": true,
+		"from_timestamp":    from,
+		"to_timestamp":      to,
+		"metadata_has_any":  metadataToLink,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to search for execution events: %w", err)
+	}
+
+	// Create links for matching execution events
+	var links []domain.EventLink
+	now := time.Now().UTC()
+
+	for _, execEvent := range executionEvents {
+		// Check if link already exists (idempotent)
+		existingLinks, err := e.storage.GetEventLinksByExecutionID(ctx, execEvent.ID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to check existing links: %w", err)
+		}
+		alreadyLinked := false
+		for _, link := range existingLinks {
+			if link.IntentEventID == event.ID && (link.LinkType == "sha_match" || link.LinkType == "image_tag_match") {
+				alreadyLinked = true
+				links = append(links, link)
+				break
+			}
+		}
+		if alreadyLinked {
+			continue
+		}
+
+		// Check for SHA match
+		if sha, ok := event.Metadata["git_commit_sha"]; ok && sha != "" {
+			if execSha, ok := execEvent.Metadata["git_commit_sha"]; ok && execSha == sha {
+				link := domain.EventLink{
+					ID:               uuid.New().String(),
+					IntentEventID:    event.ID,
+					ExecutionEventID: execEvent.ID,
+					LinkType:         "sha_match",
+					Confidence:       1.0,
+					CreatedAt:        now,
+					Metadata: map[string]string{
+						"git_commit_sha": sha,
+					},
+				}
+				if err := e.storage.SaveEventLink(ctx, link); err != nil {
+					return nil, fmt.Errorf("failed to save SHA link: %w", err)
+				}
+				links = append(links, link)
+				continue // Don't also create image_tag link for same pair
+			}
+		}
+
+		// Check for image tag match
+		if tag, ok := event.Metadata["image_tag"]; ok && tag != "" {
+			if execTag, ok := execEvent.Metadata["image_tag"]; ok && execTag == tag {
+				link := domain.EventLink{
+					ID:               uuid.New().String(),
+					IntentEventID:    event.ID,
+					ExecutionEventID: execEvent.ID,
+					LinkType:         "image_tag_match",
+					Confidence:       0.9,
+					CreatedAt:        now,
+					Metadata: map[string]string{
+						"image_tag": tag,
+					},
+				}
+				if err := e.storage.SaveEventLink(ctx, link); err != nil {
+					return nil, fmt.Errorf("failed to save tag link: %w", err)
+				}
+				links = append(links, link)
 			}
 		}
 	}

@@ -15,7 +15,7 @@ This separation matters because a merged PR doesn't affect production until it's
 
 ```
 Intent (CI Build) ──────────────> Execution (K8s Rollout) ──────> Impact Analysis
-       metadata: git_sha=a1b2c3d ──links to──> metadata: git_sha=a1b2c3d
+       metadata: git_commit_sha=a1b2c3d ──links to──> metadata: git_commit_sha=a1b2c3d
 ```
 
 ---
@@ -115,6 +115,69 @@ When Valiant encounters an **Execution** event (e.g., a K8s deployment), it look
 - `image_tag` - The same container image tag links the build to the deployment
 
 If no matching intent event is found, the execution is marked as **orphaned** - meaning it happened without a corresponding CI signal. This helps identify unexpected or undocumented changes.
+
+---
+
+## Config Trigger Linking
+
+Beyond Intent-Execution linking (CI build → K8s rollout), Valiant can detect when a **ConfigMap or Secret change preceded a deployment rollout** and link them as a potential trigger.
+
+### How It Works
+
+The linking direction is **reverse**: when a `deployment_rollout` or `statefulset_rollout` event occurs, the correlator looks **backwards in time** for recent config changes that affected the same service.
+
+```
+        ◄── Config Trigger Window (default 15m) ──►
+        ┌──────────────────────────────────────────┐
+        │  ConfigMap update (affected: api-gateway) │
+        └──────────────────────┬───────────────────┘
+                               │ within window?
+                               ▼
+                     Deployment rollout (api-gateway)
+                               │
+                               ▼
+                     EventLink { type: "config_trigger", confidence: 0.83 }
+```
+
+1. **Detection**: The K8s collector detects ConfigMap/Secret data changes via SHA256 hash comparison on each poll cycle.
+2. **Affected services discovery**: The collector scans all Deployments and StatefulSets to find workloads that reference the changed resource via:
+   - `envFrom.configMapRef` / `envFrom.secretRef`
+   - `env[].valueFrom.configMapKeyRef` / `secretKeyRef`
+   - `volumes[].configMap` / `volumes[].secret`
+3. **Linking on rollout**: When a rollout completes, `CreateConfigTriggerLinks()` queries for config changes that:
+   - Have the rollout's service in their `affected_services` array
+   - Occurred within the `config_trigger_dur` window (default 15m) before the rollout timestamp
+4. **Confidence**: Ranges from **0.7** (at the edge of the window) to **0.9** (immediately before the rollout), based on temporal proximity.
+
+### Known Limitation: Hot-Reload Blind Spot
+
+Config trigger linking only fires when a rollout follows a config change. If your application **hot-reloads** a mounted ConfigMap without triggering a pod restart (e.g., Spring Cloud Config, Envoy xDS, file-watcher patterns), there is no rollout event to anchor the search. The config change event is stored with `affected_services` populated, but the correlator has no execution event to link it to.
+
+**Impact**: A ConfigMap change that degrades a hot-reloading service will appear in the timeline but won't automatically get an impact analysis unless manually triggered via `POST /api/v1/analyze`.
+
+---
+
+## Blast Radius
+
+For ConfigMap and Secret changes, Valiant computes a **blast radius** - the set of workloads that consume the changed resource.
+
+```json
+{
+  "total_workloads": 3,
+  "affected_deployments": ["api-gateway", "auth-service"],
+  "affected_statefulsets": ["redis-cluster"]
+}
+```
+
+### Computation
+
+At collection time, the K8s collector discovers referencing workloads (same pod spec scan used for config trigger linking) and stores the blast radius on the event. This is:
+- **Nil** when no workloads reference the config resource (orphaned config)
+- **Populated** with the count and names of all Deployments + StatefulSets that mount or env-ref the resource
+
+### Usage
+
+Blast radius is stored as JSONB in the `change_events` table and copied to the `ImpactAnalysis` snapshot. It is **informational metadata** for user investigation - it does not directly influence the impact score or ranking algorithm. The value is in answering: *"How many services could this config change have broken?"*
 
 ---
 

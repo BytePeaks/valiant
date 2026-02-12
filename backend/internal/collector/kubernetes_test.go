@@ -697,6 +697,225 @@ done:
 	}
 }
 
+func TestKubernetesCollector_ArgoCDAutoDetection(t *testing.T) {
+	cfg := config.Config{}
+	cfg.Kubernetes.AllowedSources = []string{"argocd"}
+
+	t.Run("auto-detect via tracking-id annotation", func(t *testing.T) {
+		dep := &appsv1.Deployment{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "argocd-app",
+				Namespace: "default",
+				Annotations: map[string]string{
+					"argocd.argoproj.io/tracking-id": "my-app:apps/Deployment:default/argocd-app",
+				},
+				Generation: 1,
+				UID:        "test-uid",
+			},
+			Status: appsv1.DeploymentStatus{
+				Conditions: []appsv1.DeploymentCondition{
+					{Type: "Available", Status: "True", LastUpdateTime: metav1.Now()},
+					{Type: "Progressing", Reason: "NewReplicaSetAvailable"},
+				},
+			},
+		}
+
+		client := fake.NewSimpleClientset(dep)
+		coll, err := collector.NewKubernetesCollector(cfg, client)
+		if err != nil {
+			t.Fatal(err)
+		}
+		eventChan := make(chan domain.ChangeEvent, 10)
+		ctx := context.Background()
+
+		coll.CollectAndSend(ctx, eventChan)
+
+		select {
+		case event := <-eventChan:
+			if event.TriggerType != "argocd" {
+				t.Errorf("expected TriggerType 'argocd', got %q", event.TriggerType)
+			}
+			if event.Metadata["argocd_app_name"] != "my-app" {
+				t.Errorf("expected argocd_app_name 'my-app', got %q", event.Metadata["argocd_app_name"])
+			}
+			if event.Metadata["intent_source"] != "argocd" {
+				t.Errorf("expected intent_source 'argocd', got %q", event.Metadata["intent_source"])
+			}
+		case <-time.After(500 * time.Millisecond):
+			t.Fatal("timeout waiting for event")
+		}
+	})
+
+	t.Run("auto-detect via managed-by annotation", func(t *testing.T) {
+		dep := &appsv1.Deployment{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "managed-app",
+				Namespace: "default",
+				Annotations: map[string]string{
+					"argocd.argoproj.io/managed-by": "argocd-instance",
+				},
+				Generation: 1,
+				UID:        "test-uid-2",
+			},
+			Status: appsv1.DeploymentStatus{
+				Conditions: []appsv1.DeploymentCondition{
+					{Type: "Available", Status: "True", LastUpdateTime: metav1.Now()},
+					{Type: "Progressing", Reason: "NewReplicaSetAvailable"},
+				},
+			},
+		}
+
+		client := fake.NewSimpleClientset(dep)
+		coll, err := collector.NewKubernetesCollector(cfg, client)
+		if err != nil {
+			t.Fatal(err)
+		}
+		eventChan := make(chan domain.ChangeEvent, 10)
+		ctx := context.Background()
+
+		coll.CollectAndSend(ctx, eventChan)
+
+		select {
+		case event := <-eventChan:
+			if event.TriggerType != "argocd" {
+				t.Errorf("expected TriggerType 'argocd', got %q", event.TriggerType)
+			}
+		case <-time.After(500 * time.Millisecond):
+			t.Fatal("timeout waiting for event")
+		}
+	})
+
+	t.Run("auto-detect via instance label", func(t *testing.T) {
+		dep := &appsv1.Deployment{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "labeled-app",
+				Namespace: "default",
+				Labels: map[string]string{
+					"app.kubernetes.io/instance": "my-argo-app",
+				},
+				Generation: 1,
+				UID:        "test-uid-3",
+			},
+			Status: appsv1.DeploymentStatus{
+				Conditions: []appsv1.DeploymentCondition{
+					{Type: "Available", Status: "True", LastUpdateTime: metav1.Now()},
+					{Type: "Progressing", Reason: "NewReplicaSetAvailable"},
+				},
+			},
+		}
+
+		client := fake.NewSimpleClientset(dep)
+		coll, err := collector.NewKubernetesCollector(cfg, client)
+		if err != nil {
+			t.Fatal(err)
+		}
+		eventChan := make(chan domain.ChangeEvent, 10)
+		ctx := context.Background()
+
+		coll.CollectAndSend(ctx, eventChan)
+
+		select {
+		case event := <-eventChan:
+			if event.TriggerType != "argocd" {
+				t.Errorf("expected TriggerType 'argocd', got %q", event.TriggerType)
+			}
+			if event.Metadata["argocd_app_name"] != "my-argo-app" {
+				t.Errorf("expected argocd_app_name 'my-argo-app', got %q", event.Metadata["argocd_app_name"])
+			}
+		case <-time.After(500 * time.Millisecond):
+			t.Fatal("timeout waiting for event")
+		}
+	})
+
+	t.Run("explicit annotation takes priority over ArgoCD labels", func(t *testing.T) {
+		dep := &appsv1.Deployment{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "priority-app",
+				Namespace: "default",
+				Annotations: map[string]string{
+					"valiant.io/source":              "helm",
+					"argocd.argoproj.io/tracking-id": "my-app:apps/Deployment:default/priority-app",
+				},
+				Labels: map[string]string{
+					"app.kubernetes.io/instance": "my-argo-app",
+				},
+				Generation: 1,
+				UID:        "test-uid-4",
+			},
+			Status: appsv1.DeploymentStatus{
+				Conditions: []appsv1.DeploymentCondition{
+					{Type: "Available", Status: "True", LastUpdateTime: metav1.Now()},
+					{Type: "Progressing", Reason: "NewReplicaSetAvailable"},
+				},
+			},
+		}
+
+		cfgWithHelm := config.Config{}
+		cfgWithHelm.Kubernetes.AllowedSources = []string{"argocd", "helm"}
+
+		client := fake.NewSimpleClientset(dep)
+		coll, err := collector.NewKubernetesCollector(cfgWithHelm, client)
+		if err != nil {
+			t.Fatal(err)
+		}
+		eventChan := make(chan domain.ChangeEvent, 10)
+		ctx := context.Background()
+
+		coll.CollectAndSend(ctx, eventChan)
+
+		select {
+		case event := <-eventChan:
+			if event.TriggerType != "helm" {
+				t.Errorf("expected TriggerType 'helm' (explicit annotation priority), got %q", event.TriggerType)
+			}
+			if event.Metadata["intent_source"] != "helm" {
+				t.Errorf("expected intent_source 'helm', got %q", event.Metadata["intent_source"])
+			}
+		case <-time.After(500 * time.Millisecond):
+			t.Fatal("timeout waiting for event")
+		}
+	})
+
+	t.Run("fallback to kubernetes-api when no indicators", func(t *testing.T) {
+		dep := &appsv1.Deployment{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:       "plain-app",
+				Namespace:  "default",
+				Generation: 1,
+				UID:        "test-uid-5",
+			},
+			Status: appsv1.DeploymentStatus{
+				Conditions: []appsv1.DeploymentCondition{
+					{Type: "Available", Status: "True", LastUpdateTime: metav1.Now()},
+					{Type: "Progressing", Reason: "NewReplicaSetAvailable"},
+				},
+			},
+		}
+
+		client := fake.NewSimpleClientset(dep)
+		coll, err := collector.NewKubernetesCollector(cfg, client)
+		if err != nil {
+			t.Fatal(err)
+		}
+		eventChan := make(chan domain.ChangeEvent, 10)
+		ctx := context.Background()
+
+		coll.CollectAndSend(ctx, eventChan)
+
+		select {
+		case event := <-eventChan:
+			if event.TriggerType != "kubernetes-api" {
+				t.Errorf("expected TriggerType 'kubernetes-api', got %q", event.TriggerType)
+			}
+			if event.Metadata["argocd_app_name"] != "" {
+				t.Errorf("expected empty argocd_app_name, got %q", event.Metadata["argocd_app_name"])
+			}
+		case <-time.After(500 * time.Millisecond):
+			t.Fatal("timeout waiting for event")
+		}
+	})
+}
+
 func TestKubernetesCollector_ConfigMapAnnotationFilter(t *testing.T) {
 	cfg := config.Config{}
 	cfg.Kubernetes.WatchConfigMaps = true

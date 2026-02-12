@@ -1,6 +1,6 @@
 
 import { useState, useEffect } from 'react';
-import { Clock, Zap, GitBranch, Box, Bot, Info, Hourglass, Loader2, Tag, ShieldCheck, Settings2, Activity, ExternalLink } from 'lucide-react';
+import { Clock, Zap, GitBranch, Box, Bot, Info, Hourglass, Loader2, Tag, ShieldCheck, Settings2, Activity, ExternalLink, Link2 } from 'lucide-react';
 import { timeAgo, getImpactColor } from '../../lib/utils';
 import type { ChangeEvent, ImpactAnalysis, TimelineEventProps } from '../../lib/api';
 import type { MetricInfo } from '../promql-modal';
@@ -105,9 +105,24 @@ export default function TimelineEvent({ event }: TimelineEventProps) {
       {/* Event Header */}
       <div className="flex justify-between items-start">
         <div className="space-y-1">
-          <div className="flex items-center gap-2 text-[10px] font-bold text-blue-600 uppercase tracking-widest">
-            {getSourceIcon()}
-            {event.trigger_type || event.source}
+          <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest">
+            {event.linked_intent ? (
+              <span className="flex items-center gap-1 px-2 py-0.5 bg-emerald-100 text-emerald-700 rounded-full">
+                <Link2 className="w-3 h-3" /> CORRELATED
+              </span>
+            ) : event.is_execution ? (
+              <span className="flex items-center gap-1 px-2 py-0.5 bg-blue-100 text-blue-700 rounded-full">
+                <Zap className="w-3 h-3" /> EXECUTION
+              </span>
+            ) : null}
+            {event.link_type && (
+              <span className="flex items-center gap-1 px-2 py-0.5 bg-violet-50 text-violet-600 rounded-full">
+                {event.link_type === 'sha_match' ? 'SHA Match' : 'Image Tag Match'}
+              </span>
+            )}
+            <span className="flex items-center gap-1 px-2 py-0.5 bg-gray-50 text-gray-700 rounded-full">
+              {getSourceIcon()} {event.trigger_type || event.source}
+            </span>
           </div>
           <h3 className="text-xl font-bold text-gray-900 group-hover:text-blue-700 transition-colors">{event.summary}</h3>
           <div className="flex items-center gap-2 text-sm text-gray-400">
@@ -123,7 +138,29 @@ export default function TimelineEvent({ event }: TimelineEventProps) {
                 {service}
               </span>
             ))}
+            {(event.metadata?.git_commit_sha || event.metadata?.git_sha) && (
+              <span
+                className="flex items-center gap-1 px-2 py-0.5 bg-gray-50 text-gray-600 text-[10px] font-bold rounded-full border border-gray-100"
+                title={`Git SHA: ${event.metadata.git_commit_sha || event.metadata.git_sha}`}
+              >
+                <GitBranch className="w-2 h-2" />
+                {(event.metadata.git_commit_sha || event.metadata.git_sha).substring(0, 7)}
+              </span>
+            )}
           </div>
+          {/* Triggered by section - shows the linked CI event */}
+          {event.linked_intent && (
+            <div className="flex items-center gap-2 mt-1 text-xs text-gray-500">
+              <Link2 className="w-3 h-3 text-emerald-500" />
+              <span className="font-medium text-gray-400">Triggered by:</span>
+              <span className="font-semibold text-gray-600">{event.linked_intent.summary}</span>
+              {event.linked_intent.trigger_type && (
+                <span className="px-1.5 py-0.5 bg-purple-50 text-purple-600 text-[10px] font-bold rounded-full">
+                  {event.linked_intent.trigger_type}
+                </span>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Actions Area */}

@@ -212,9 +212,9 @@ func (c *KubernetesCollector) CollectAndSend(ctx context.Context, eventChan chan
 		}
 
 		// 1. Intent Validation
-		source, exists := d.Annotations["valiant.io/source"]
+		source := d.Annotations["valiant.io/source"]
 		if c.requireAnnot {
-			if !exists || !c.isSourceAllowed(source) {
+			if !c.isSourceAllowed(source) {
 				continue
 			}
 		}
@@ -270,7 +270,9 @@ func (c *KubernetesCollector) CollectAndSend(ctx context.Context, eventChan chan
 			eventChan <- domain.ChangeEvent{
 				ID:               fmt.Sprintf("k8s-%s-%s-%d", d.Namespace, d.Name, d.Generation),
 				Source:           "kubernetes",
-				TriggerType:      "GitOps",
+				TriggerType:      c.getTriggerType(source),
+				IsIntent:         false,
+				IsExecution:      true,
 				ExecutionID:      fmt.Sprintf("%s-%d", d.UID, d.Generation),
 				ChangeType:       "deployment_rollout",
 				Timestamp:        rolloutStartTime,
@@ -278,14 +280,14 @@ func (c *KubernetesCollector) CollectAndSend(ctx context.Context, eventChan chan
 				AffectedServices: []string{d.Name},
 				Summary:          fmt.Sprintf("Deployment %s rollout completed via %s", d.Name, source),
 				Metadata: map[string]string{
-					"namespace":     d.Namespace,
-					"kind":          "Deployment",
-					"generation":    fmt.Sprintf("%d", d.Generation),
-					"image":         image,
-					"intent_source": source,
-					"git_sha":       gitSha,
-					"rollout_start": rolloutStartTime.Format(time.RFC3339),
-					"rollout_end":   rolloutEndTime.Format(time.RFC3339),
+					"namespace":      d.Namespace,
+					"kind":           "Deployment",
+					"generation":     fmt.Sprintf("%d", d.Generation),
+					"image":          image,
+					"intent_source":  source,
+					"git_commit_sha": gitSha,
+					"rollout_start":  rolloutStartTime.Format(time.RFC3339),
+					"rollout_end":    rolloutEndTime.Format(time.RFC3339),
 				},
 			}
 			c.lastProcessed[key] = d.Generation
@@ -332,9 +334,9 @@ func (c *KubernetesCollector) CollectAndSend(ctx context.Context, eventChan chan
 		}
 
 		// Intent Validation
-		source, exists := ss.Annotations["valiant.io/source"]
+		source := ss.Annotations["valiant.io/source"]
 		if c.requireAnnot {
-			if !exists || !c.isSourceAllowed(source) {
+			if !c.isSourceAllowed(source) {
 				continue
 			}
 		}
@@ -373,7 +375,9 @@ func (c *KubernetesCollector) CollectAndSend(ctx context.Context, eventChan chan
 		eventChan <- domain.ChangeEvent{
 			ID:               fmt.Sprintf("k8s-%s-%s-%d", ss.Namespace, ss.Name, ss.Generation),
 			Source:           "kubernetes",
-			TriggerType:      "GitOps",
+			TriggerType:      c.getTriggerType(source),
+			IsIntent:         false,
+			IsExecution:      true,
 			ExecutionID:      fmt.Sprintf("%s-%d", ss.UID, ss.Generation),
 			ChangeType:       "statefulset_rollout",
 			Timestamp:        rolloutStartTime,
@@ -386,7 +390,7 @@ func (c *KubernetesCollector) CollectAndSend(ctx context.Context, eventChan chan
 				"generation":      fmt.Sprintf("%d", ss.Generation),
 				"image":           image,
 				"intent_source":   source,
-				"git_sha":         gitSha,
+				"git_commit_sha":  gitSha,
 				"update_revision": ss.Status.UpdateRevision,
 			},
 		}
@@ -422,7 +426,22 @@ func isRecentStatefulSetRollout(ss *appsv1.StatefulSet) bool {
 		ss.Status.CurrentRevision == ss.Status.UpdateRevision
 }
 
+func (c *KubernetesCollector) getTriggerType(intentSource string) string {
+	if intentSource == "" {
+		return "kubernetes-api"
+	}
+	for _, s := range c.allowedSources {
+		if s == intentSource {
+			return intentSource
+		}
+	}
+	return "kubernetes-api"
+}
+
 func (c *KubernetesCollector) isSourceAllowed(source string) bool {
+	if len(c.allowedSources) == 0 {
+		return true // If no specific sources are allowed, all are implicitly allowed
+	}
 	for _, s := range c.allowedSources {
 		if s == source {
 			return true
@@ -537,7 +556,7 @@ func (c *KubernetesCollector) listConfigMaps(ctx context.Context, watchedNamespa
 		cms, err := c.clientset.CoreV1().ConfigMaps("").List(ctx, metav1.ListOptions{})
 		if err != nil {
 			if k8serrors.IsForbidden(err) {
-				fmt.Printf("[valiant] RBAC error: cannot list ConfigMaps cluster-wide. "+
+				fmt.Printf("[valiant] RBAC error: cannot list ConfigMaps cluster-wide. " +
 					"Apply deploy/kubernetes/rbac.yaml or configure specific namespaces.\n")
 			} else {
 				fmt.Printf("Error listing configmaps: %v\n", err)
@@ -575,8 +594,8 @@ func (c *KubernetesCollector) collectConfigMapChanges(ctx context.Context, event
 
 		// Annotation filter
 		if c.requireAnnot {
-			source, exists := cm.Annotations["valiant.io/source"]
-			if !exists || !c.isSourceAllowed(source) {
+			source := cm.Annotations["valiant.io/source"]
+			if !c.isSourceAllowed(source) {
 				continue
 			}
 		}
@@ -620,21 +639,23 @@ func (c *KubernetesCollector) collectConfigMapChanges(ctx context.Context, event
 		eventChan <- domain.ChangeEvent{
 			ID:               fmt.Sprintf("k8s-cm-%s-%s-%s", cm.Namespace, cm.Name, hash[:8]),
 			Source:           "kubernetes",
-			TriggerType:      "GitOps",
+			TriggerType:      c.getTriggerType(cm.Annotations["valiant.io/source"]),
+			IsIntent:         false,
+			IsExecution:      true,
 			ChangeType:       "configmap_update",
 			Timestamp:        time.Now(),
 			AffectedServices: affectedServices,
 			BlastRadius:      blastRadius,
 			Summary:          fmt.Sprintf("ConfigMap %s/%s data changed", cm.Namespace, cm.Name),
 			Metadata: map[string]string{
-				"namespace":                 cm.Namespace,
-				"kind":                      "ConfigMap",
+				"namespace":                cm.Namespace,
+				"kind":                     "ConfigMap",
 				"data_keys":                strings.Join(dataKeys, ","),
 				"data_hash":                hash[:8],
 				"intent_source":            cm.Annotations["valiant.io/source"],
 				"referencing_deployments":  strings.Join(refs.Deployments, ","),
 				"referencing_statefulsets": strings.Join(refs.StatefulSets, ","),
-				"blast_radius":            fmt.Sprintf("%d", totalWorkloads),
+				"blast_radius":             fmt.Sprintf("%d", totalWorkloads),
 			},
 		}
 	}
@@ -645,7 +666,7 @@ func (c *KubernetesCollector) listSecrets(ctx context.Context, watchedNamespaces
 		secrets, err := c.clientset.CoreV1().Secrets("").List(ctx, metav1.ListOptions{})
 		if err != nil {
 			if k8serrors.IsForbidden(err) {
-				fmt.Printf("[valiant] RBAC error: cannot list Secrets cluster-wide. "+
+				fmt.Printf("[valiant] RBAC error: cannot list Secrets cluster-wide. " +
 					"Apply deploy/kubernetes/rbac.yaml or configure specific namespaces.\n")
 			} else {
 				fmt.Printf("Error listing secrets: %v\n", err)
@@ -688,8 +709,8 @@ func (c *KubernetesCollector) collectSecretChanges(ctx context.Context, eventCha
 
 		// Annotation filter
 		if c.requireAnnot {
-			source, exists := s.Annotations["valiant.io/source"]
-			if !exists || !c.isSourceAllowed(source) {
+			source := s.Annotations["valiant.io/source"]
+			if !c.isSourceAllowed(source) {
 				continue
 			}
 		}
@@ -733,20 +754,22 @@ func (c *KubernetesCollector) collectSecretChanges(ctx context.Context, eventCha
 		eventChan <- domain.ChangeEvent{
 			ID:               fmt.Sprintf("k8s-secret-%s-%s-%s", s.Namespace, s.Name, hash[:8]),
 			Source:           "kubernetes",
-			TriggerType:      "GitOps",
+			TriggerType:      c.getTriggerType(s.Annotations["valiant.io/source"]),
+			IsIntent:         false,
+			IsExecution:      true,
 			ChangeType:       "secret_update",
 			Timestamp:        time.Now(),
 			AffectedServices: affectedServices,
 			BlastRadius:      blastRadius,
 			Summary:          fmt.Sprintf("Secret %s/%s data changed", s.Namespace, s.Name),
 			Metadata: map[string]string{
-				"namespace":                 s.Namespace,
-				"kind":                      "Secret",
+				"namespace":                s.Namespace,
+				"kind":                     "Secret",
 				"data_keys":                strings.Join(dataKeys, ","),
 				"intent_source":            s.Annotations["valiant.io/source"],
 				"referencing_deployments":  strings.Join(refs.Deployments, ","),
 				"referencing_statefulsets": strings.Join(refs.StatefulSets, ","),
-				"blast_radius":            fmt.Sprintf("%d", totalWorkloads),
+				"blast_radius":             fmt.Sprintf("%d", totalWorkloads),
 			},
 		}
 	}
