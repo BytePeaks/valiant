@@ -1,6 +1,6 @@
 
 import { useState, useEffect } from 'react';
-import { Clock, Zap, GitBranch, Box, Bot, Info, Hourglass, Loader2, Tag, ShieldCheck, Settings2, Activity, ExternalLink, Link2 } from 'lucide-react';
+import { Clock, Zap, GitBranch, Box, Bot, Info, Hourglass, Loader2, Tag, ShieldCheck, Settings2, Activity, ExternalLink, Link2, Rocket, Webhook, Hand } from 'lucide-react';
 import { timeAgo, getImpactColor } from '../../lib/utils';
 import type { ChangeEvent, ImpactAnalysis, TimelineEventProps } from '../../lib/api';
 import type { MetricInfo } from '../promql-modal';
@@ -86,6 +86,12 @@ export default function TimelineEvent({ event }: TimelineEventProps) {
       case 'ci':
       case 'ci-cd':
         return <Bot className="w-4 h-4" />;
+      case 'argocd':
+        return <Rocket className="w-4 h-4" />;
+      case 'kubernetes-api':
+        return <Webhook className="w-4 h-4" />;
+      case 'manual':
+        return <Hand className="w-4 h-4" />;
       default:
         return <Info className="w-4 h-4" />;
     }
@@ -160,19 +166,17 @@ export default function TimelineEvent({ event }: TimelineEventProps) {
                     {event.linked_intent.trigger_type}
                   </span>
                 )}
+                {event.link_confidence === 1.0 && (
+                  <span className="px-1.5 py-0.5 bg-emerald-100 text-emerald-700 text-[10px] font-semibold rounded-full border border-emerald-200">
+                    Full confidence
+                  </span>
+                )}
               </div>
-              {(event.link_confidence != null || event.link_reason) && (
+              {event.link_reason && (
                 <div className="flex items-center gap-2 text-[11px] text-gray-400 ml-5">
-                  {event.link_confidence != null && (
-                    <span className="px-1.5 py-0.5 bg-gray-50 text-gray-500 font-semibold rounded-full border border-gray-100">
-                      {event.link_confidence.toFixed(1)} confidence
-                    </span>
-                  )}
-                  {event.link_reason && (
-                    <span className="text-gray-400 truncate max-w-md" title={event.link_reason}>
-                      {event.link_reason}
-                    </span>
-                  )}
+                  <span className="text-gray-400 truncate max-w-md" title={event.link_reason}>
+                    {event.link_reason}
+                  </span>
                 </div>
               )}
             </div>
@@ -347,7 +351,10 @@ export default function TimelineEvent({ event }: TimelineEventProps) {
                     checked={selectedMetrics.has(metric.name)}
                     onChange={e => handleMetricSelectionChange(metric.name, e.target.checked)}
                   />
-                  <span className="text-gray-700">{metric.name}</span>
+                  <div className="flex items-center gap-2">
+                    {getIcon(metric.icon)}
+                    <span className="text-gray-700">{metric.name}</span>
+                  </div>
                 </label>
               ))}
             </div>
