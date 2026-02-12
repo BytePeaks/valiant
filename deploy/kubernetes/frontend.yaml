@@ -21,7 +21,7 @@ spec:
     spec:
       containers:
         - name: frontend
-          image: valiant-frontend:latest
+          image: ghcr.io/bytepeaks/valiant-frontend:1.0.0-alpha
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 3000
