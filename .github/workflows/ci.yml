@@ -37,17 +37,21 @@ jobs:
 
       - name: Go Format
         run: |
-          go fmt ./backend/...
+          go fmt ./...
           git diff --exit-code
+        working-directory: ./backend
 
       - name: Go Vet
-        run: go vet ./backend/...
+        run: go vet ./...
+        working-directory: ./backend
 
       - name: Run Backend Tests
-        run: go test -v ./backend/...
+        run: go test -v ./...
+        working-directory: ./backend
 
       - name: Build Backend
-        run: go build -o ./backend/valiant-backend ./backend/cmd/valiant
+        run: go build -o valiant-backend ./cmd/valiant
+        working-directory: ./backend
 
   frontend-ci:
     name: Frontend CI
