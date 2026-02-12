@@ -47,6 +47,7 @@ func TestStatefulSetRolloutDetection(t *testing.T) {
 
 	// For StatefulSets, first call records the generation; update generation to trigger detection
 	ss.Generation = 2
+	ss.Annotations["valiant.io/git-sha"] = "ss-sha-456"
 	shared.SetStatefulSetReady(ss)
 	_, err = fakeClient.AppsV1().StatefulSets(namespace).Update(context.Background(), ss, metav1.UpdateOptions{})
 	require.NoError(t, err)

@@ -14,6 +14,7 @@ func SampleChangeEvent() domain.ChangeEvent {
 		Source:           "kubernetes", // Deprecated but still in use
 		TriggerType:      "GitOps",
 		ExecutionID:      "deploy-12345",
+		IsExecution:      true,
 		ChangeType:       "deployment_rollout",
 		Timestamp:        time.Now().Add(-1 * time.Hour),
 		EndTime:          &endTime,
@@ -34,6 +35,7 @@ func SampleCIEvent() domain.ChangeEvent {
 		Source:           "ci-cd",
 		TriggerType:      "CI",
 		ExecutionID:      "build-789",
+		IsIntent:         true,
 		ChangeType:       "build_success",
 		Timestamp:        time.Now().Add(-2 * time.Hour),
 		AffectedServices: []string{"api-service"},

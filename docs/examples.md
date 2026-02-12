@@ -133,10 +133,12 @@ Valiant now has two `ChangeEvent`s:
     *   `is_intent`: `false`
     *   `is_execution`: `true`
     *   `metadata.intent_source`: `"argocd"` (from the annotation)
-    *   `metadata.image`: `"my-registry/api-gateway:a1b2c3d..."`
+    *   `metadata.image`: `"my-registry/api-gateway:a1b2c3d..."` (auto-extracted from container spec)
+    *   `metadata.image_tag`: `"my-registry/api-gateway:a1b2c3d..."` (same value, used for linking)
+    *   `metadata.env`: `"default"` (namespace, used for filtering)
     *   `metadata.git_commit_sha`: `"a1b2c3d..."` (from `valiant.io/git-sha` annotation)
 
-The `correlator` engine links these two events into one logical change because **both the `service` name and the image tag/SHA match perfectly.**
+The `correlator` engine links these two events because **both the `service` name and the `git_commit_sha` match** (`sha_match` at 1.0 confidence). Even without the `valiant.io/git-sha` annotation, they would still link via the **matching `image_tag`** (`image_tag_match` at 0.9 confidence) — this is the zero-config path.
 
 ---
 
@@ -225,7 +227,7 @@ Even though the "Intent" and "Execution" are separated by a significant time gap
 2.  It now observes the Kubernetes rollout of the `payment-processor` (which becomes an Execution event with `is_execution: true`).
 3.  It extracts the `service` name (`payment-processor`) and the image being deployed (`my-registry/payment-processor:a1b2c3d...`), as well as the `valiant.io/git-sha`.
 
-Because the **`service` name and `image_tag`/`git_commit_sha` metadata still match**, Valiant successfully links the production deployment back to its original build event. This provides an incredibly powerful audit trail, showing exactly which build artifact was deployed, even when the "Intent" and "Execution" are not part of the same continuous pipeline.
+Valiant links them using its confidence ladder. With the `valiant.io/git-sha` annotation, it creates a `sha_match` link (1.0 confidence). Without the annotation, the matching `image_tag` (auto-extracted from the container spec) produces an `image_tag_match` link (0.9 confidence). This provides an audit trail showing exactly which build artifact was deployed, even when the "Intent" and "Execution" are separated by hours or days.
 
 ---
 
@@ -277,6 +279,7 @@ ChangeEvent:
     affected_deployments: ["api-gateway", "auth-service"]
     affected_statefulsets: []
   metadata:
+    env: "production"            # Used for namespace filtering in DB queries
     namespace: "production"
     kind: "ConfigMap"
     data_keys: "rate_limit,timeout_ms"
@@ -292,7 +295,9 @@ ChangeEvent:
   change_type: "deployment_rollout"
   affected_services: ["api-gateway"]
   metadata:
+    env: "production"
     namespace: "production"
+    image_tag: "my-registry/api-gateway:a1b2c3d..."
 ```
 
 ### Step 4: Config Trigger Linking
@@ -325,10 +330,18 @@ If `auth-service` hot-reloads the ConfigMap **without** a pod restart, there is 
 
 For successful linking, ensure these fields align across your systems:
 
+| Valiant "Intent" (API) | Valiant "Execution" (Kubernetes) | Link Type | Confidence |
+|:-----------------------|:---------------------------------|:----------|:-----------|
+| `metadata.git_commit_sha` | `valiant.io/git-sha` annotation | `sha_match` | **1.0** |
+| `metadata.image_tag` | Container `image` (auto-extracted as `metadata.image_tag`) | `image_tag_match` | **0.9** |
+| `metadata.git_commit_sha` | Container image tag contains the SHA | `image_sha_inferred` | **0.85** |
+
+**Additional matching requirements:**
+
 | Valiant "Intent" (API) | Valiant "Execution" (Kubernetes) | Description |
 |:-----------------------|:---------------------------------|:------------|
 | `service` (string) | `metadata.name` (string) | **Must match exactly.** The canonical identity of your service. |
-| `metadata.image_tag` (string) | Container `image` (string) | The full image name and tag. A primary linking key. |
-| `metadata.git_commit_sha` (string) | `valiant.io/git-sha` (annotation) | The Git commit SHA. A highly reliable, immutable linking key. |
-| `trigger_type` (string) | `valiant.io/source` (annotation) | The source system of the execution event (e.g., "argocd", "helm", "kubernetes-api" if unspecified). This sets the `trigger_type` for the Kubernetes-observed event. |
-| `metadata.<url_field>` (string) | N/A | **Deeplinking:** Any URL (e.g., `github_run_url`, `jenkins_build_url`) in metadata for direct navigation from Valiant's UI to external systems. Check [config.yaml](../example/config.yaml) section `Linking Configuration`|
+| `trigger_type` (string) | `valiant.io/source` (annotation) | The source system (e.g., "argocd", "helm", "kubernetes-api"). Sets the `trigger_type` for K8s events. |
+| `metadata.<url_field>` (string) | N/A | **Deeplinking:** Any URL (e.g., `github_run_url`, `jenkins_build_url`) in metadata for direct navigation from Valiant's UI to external systems. Check [config.yaml](../example/config.yaml) section `Linking Configuration`. |
+
+**Zero-config path:** Tiers 2 and 3 (`image_tag_match` and `image_sha_inferred`) require no K8s annotations — the collector auto-extracts `image_tag` from the container spec. Only tier 1 (`sha_match`) requires the `valiant.io/git-sha` annotation.

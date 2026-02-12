@@ -56,8 +56,8 @@ func SampleDeployment(name, namespace, image, sha string) *appsv1.Deployment {
 			Namespace: namespace,
 			UID:       types.UID(name + "-uid"),
 			Annotations: map[string]string{
-				"valiant.io/source": "cicd",
-				"git_commit_sha":    sha,
+				"valiant.io/source":  "cicd",
+				"valiant.io/git-sha": sha,
 			},
 			Generation: 1,
 		},

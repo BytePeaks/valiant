@@ -188,6 +188,13 @@ This is returned when analysis is requested before the post-execution impact win
 
 List all services that have at least one change event.
 
+**Query Parameters:**
+
+| Parameter | Type | Description |
+|:----------|:-----|:------------|
+| `namespace` | string | Filter by Kubernetes namespace. When `kubernetes.namespaces` is configured, the namespace is validated against the config — unconfigured namespaces return an empty list. |
+| `linked_only` | string | Set to `"true"` to return only services that have intent-execution links (`sha_match`, `image_tag_match`, or `image_sha_inferred`). |
+
 **Response:** `200 OK`
 
 ```json
@@ -200,12 +207,12 @@ List all services that have at least one change event.
 
 ### `GET /api/v1/namespaces`
 
-List all known namespaces (merged from database events and config).
+List monitored namespaces. When `kubernetes.namespaces` is configured in `config.yaml`, returns exactly those namespaces (sorted). When unconfigured, falls back to discovering namespaces from stored events in the database.
 
 **Response:** `200 OK`
 
 ```json
-["default", "payment-app", "production"]
+["default", "payment-app"]
 ```
 
 ---

@@ -30,12 +30,12 @@ func TestLinking_OutsideCorrelationWindow(t *testing.T) {
 
 	// CI event from 3 hours ago (outside the 2h window)
 	ciEvent := common.SampleCIEvent()
-	ciEvent.Timestamp = time.Now().Add(-3 * time.Hour)
+	ciEvent.Timestamp = time.Now().Add(-3 * time.Hour).Add(-1 * time.Minute)
 	ciEvent.Metadata["git_commit_sha"] = "abc123def456"
 
 	// Execution event from 30 minutes ago
 	execEvent := common.SampleChangeEvent()
-	execEvent.Timestamp = time.Now().Add(-30 * time.Minute)
+	execEvent.Timestamp = time.Now().Add(-60 * time.Minute)
 	execEndTime := execEvent.Timestamp.Add(5 * time.Minute)
 	execEvent.EndTime = &execEndTime
 	execEvent.Metadata["git_commit_sha"] = "abc123def456"

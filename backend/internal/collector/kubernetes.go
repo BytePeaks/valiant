@@ -262,10 +262,7 @@ func (c *KubernetesCollector) CollectAndSend(ctx context.Context, eventChan chan
 			}
 
 			rolloutEndTime := availableCond.LastUpdateTime.Time
-			image := ""
-			if len(d.Spec.Template.Spec.Containers) > 0 {
-				image = d.Spec.Template.Spec.Containers[0].Image
-			}
+			image, containerName := SelectAppContainer(d.Spec.Template.Spec.Containers, d.Annotations)
 
 			eventChan <- domain.ChangeEvent{
 				ID:               fmt.Sprintf("k8s-%s-%s-%d", d.Namespace, d.Name, d.Generation),
@@ -280,10 +277,13 @@ func (c *KubernetesCollector) CollectAndSend(ctx context.Context, eventChan chan
 				AffectedServices: []string{d.Name},
 				Summary:          fmt.Sprintf("Deployment %s rollout completed via %s", d.Name, source),
 				Metadata: map[string]string{
+					"env":            d.Namespace,
 					"namespace":      d.Namespace,
 					"kind":           "Deployment",
 					"generation":     fmt.Sprintf("%d", d.Generation),
 					"image":          image,
+					"image_tag":      image,
+					"container_name": containerName,
 					"intent_source":  source,
 					"git_commit_sha": gitSha,
 					"rollout_start":  rolloutStartTime.Format(time.RFC3339),
@@ -367,10 +367,7 @@ func (c *KubernetesCollector) CollectAndSend(ctx context.Context, eventChan chan
 		rolloutStartTime := ss.CreationTimestamp.Time
 		rolloutEndTime := time.Now()
 
-		image := ""
-		if len(ss.Spec.Template.Spec.Containers) > 0 {
-			image = ss.Spec.Template.Spec.Containers[0].Image
-		}
+		image, containerName := SelectAppContainer(ss.Spec.Template.Spec.Containers, ss.Annotations)
 
 		eventChan <- domain.ChangeEvent{
 			ID:               fmt.Sprintf("k8s-%s-%s-%d", ss.Namespace, ss.Name, ss.Generation),
@@ -385,10 +382,13 @@ func (c *KubernetesCollector) CollectAndSend(ctx context.Context, eventChan chan
 			AffectedServices: []string{ss.Name},
 			Summary:          fmt.Sprintf("StatefulSet %s rollout completed via %s", ss.Name, source),
 			Metadata: map[string]string{
+				"env":             ss.Namespace,
 				"namespace":       ss.Namespace,
 				"kind":            "StatefulSet",
 				"generation":      fmt.Sprintf("%d", ss.Generation),
 				"image":           image,
+				"image_tag":       image,
+				"container_name":  containerName,
 				"intent_source":   source,
 				"git_commit_sha":  gitSha,
 				"update_revision": ss.Status.UpdateRevision,
@@ -648,6 +648,7 @@ func (c *KubernetesCollector) collectConfigMapChanges(ctx context.Context, event
 			BlastRadius:      blastRadius,
 			Summary:          fmt.Sprintf("ConfigMap %s/%s data changed", cm.Namespace, cm.Name),
 			Metadata: map[string]string{
+				"env":                      cm.Namespace,
 				"namespace":                cm.Namespace,
 				"kind":                     "ConfigMap",
 				"data_keys":                strings.Join(dataKeys, ","),
@@ -763,6 +764,7 @@ func (c *KubernetesCollector) collectSecretChanges(ctx context.Context, eventCha
 			BlastRadius:      blastRadius,
 			Summary:          fmt.Sprintf("Secret %s/%s data changed", s.Namespace, s.Name),
 			Metadata: map[string]string{
+				"env":                      s.Namespace,
 				"namespace":                s.Namespace,
 				"kind":                     "Secret",
 				"data_keys":                strings.Join(dataKeys, ","),
@@ -773,6 +775,40 @@ func (c *KubernetesCollector) collectSecretChanges(ctx context.Context, eventCha
 			},
 		}
 	}
+}
+
+// knownSidecars is the set of container names recognized as sidecars and
+// excluded when selecting the application container image.
+var knownSidecars = map[string]bool{
+	"istio-proxy":   true,
+	"envoy":         true,
+	"linkerd-proxy": true,
+	"vault-agent":   true,
+}
+
+// SelectAppContainer picks the most likely application container from a pod spec.
+// Priority: 1) explicit valiant.io/container annotation, 2) first non-sidecar, 3) first container.
+// Returns the image string and the container name.
+func SelectAppContainer(containers []corev1.Container, annotations map[string]string) (image string, containerName string) {
+	// Explicit override via annotation
+	if name, ok := annotations["valiant.io/container"]; ok {
+		for _, c := range containers {
+			if c.Name == name {
+				return c.Image, c.Name
+			}
+		}
+	}
+	// Filter known sidecars
+	for _, c := range containers {
+		if !knownSidecars[c.Name] {
+			return c.Image, c.Name
+		}
+	}
+	// Fallback to first container
+	if len(containers) > 0 {
+		return containers[0].Image, containers[0].Name
+	}
+	return "", ""
 }
 
 func (c *KubernetesCollector) Name() string {

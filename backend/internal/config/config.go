@@ -152,7 +152,7 @@ func Load(configPath string) (*Config, error) {
 	}
 
 	return cfg, nil
-} 
+}
 
 // parseDuration extends time.ParseDuration with support for a "d" suffix (days).
 func parseDuration(s string) (time.Duration, error) {

@@ -28,17 +28,19 @@ func TestSuccessfulLinking_ImageTagMatch(t *testing.T) {
 
 	const matchingImageTag = "v1.2.3-beta"
 
-	// CI event with the image tag
+	// CI event with the image tag (clear SHA so only tag matching fires)
 	ciEvent := common.SampleCIEvent()
 	ciEvent.Timestamp = time.Now().Add(-1 * time.Hour)
 	ciEvent.Metadata["image_tag"] = matchingImageTag
+	delete(ciEvent.Metadata, "git_commit_sha")
 
-	// Execution event with the same image tag
+	// Execution event with the same image tag (clear SHA so only tag matching fires)
 	execEvent := common.SampleChangeEvent()
-	execEvent.Timestamp = time.Now().Add(-30 * time.Minute)
+	execEvent.Timestamp = time.Now().Add(-60 * time.Minute)
 	execEndTime := execEvent.Timestamp.Add(5 * time.Minute)
 	execEvent.EndTime = &execEndTime
 	execEvent.Metadata["image_tag"] = matchingImageTag
+	delete(execEvent.Metadata, "git_commit_sha")
 
 	err = store.SaveChangeEvent(context.Background(), ciEvent)
 	require.NoError(t, err)

@@ -117,7 +117,7 @@ export default function TimelineEvent({ event }: TimelineEventProps) {
             ) : null}
             {event.link_type && (
               <span className="flex items-center gap-1 px-2 py-0.5 bg-violet-50 text-violet-600 rounded-full">
-                {event.link_type === 'sha_match' ? 'SHA Match' : 'Image Tag Match'}
+                {event.link_type === 'sha_match' ? 'SHA Match' : event.link_type === 'image_tag_match' ? 'Image Tag Match' : 'SHA Inferred'}
               </span>
             )}
             <span className="flex items-center gap-1 px-2 py-0.5 bg-gray-50 text-gray-700 rounded-full">
@@ -150,14 +150,30 @@ export default function TimelineEvent({ event }: TimelineEventProps) {
           </div>
           {/* Triggered by section - shows the linked CI event */}
           {event.linked_intent && (
-            <div className="flex items-center gap-2 mt-1 text-xs text-gray-500">
-              <Link2 className="w-3 h-3 text-emerald-500" />
-              <span className="font-medium text-gray-400">Triggered by:</span>
-              <span className="font-semibold text-gray-600">{event.linked_intent.summary}</span>
-              {event.linked_intent.trigger_type && (
-                <span className="px-1.5 py-0.5 bg-purple-50 text-purple-600 text-[10px] font-bold rounded-full">
-                  {event.linked_intent.trigger_type}
-                </span>
+            <div className="space-y-1 mt-1">
+              <div className="flex items-center gap-2 text-xs text-gray-500">
+                <Link2 className="w-3 h-3 text-emerald-500" />
+                <span className="font-medium text-gray-400">Triggered by:</span>
+                <span className="font-semibold text-gray-600">{event.linked_intent.summary}</span>
+                {event.linked_intent.trigger_type && (
+                  <span className="px-1.5 py-0.5 bg-purple-50 text-purple-600 text-[10px] font-bold rounded-full">
+                    {event.linked_intent.trigger_type}
+                  </span>
+                )}
+              </div>
+              {(event.link_confidence != null || event.link_reason) && (
+                <div className="flex items-center gap-2 text-[11px] text-gray-400 ml-5">
+                  {event.link_confidence != null && (
+                    <span className="px-1.5 py-0.5 bg-gray-50 text-gray-500 font-semibold rounded-full border border-gray-100">
+                      {event.link_confidence.toFixed(1)} confidence
+                    </span>
+                  )}
+                  {event.link_reason && (
+                    <span className="text-gray-400 truncate max-w-md" title={event.link_reason}>
+                      {event.link_reason}
+                    </span>
+                  )}
+                </div>
               )}
             </div>
           )}

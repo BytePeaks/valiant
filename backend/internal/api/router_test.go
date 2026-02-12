@@ -39,11 +39,15 @@ func (m *MockStorage) GetChangeEventByID(ctx context.Context, id string) (domain
 	}
 	return domain.ChangeEvent{}, nil
 }
-func (m *MockStorage) GetServices(ctx context.Context, namespace string, linkedOnly bool) ([]string, error) { return nil, nil }
+func (m *MockStorage) GetServices(ctx context.Context, namespace string, linkedOnly bool) ([]string, error) {
+	return nil, nil
+}
 func (m *MockStorage) GetEventsPendingAnalysis(ctx context.Context) ([]domain.ChangeEvent, error) {
 	return nil, nil
 }
-func (m *MockStorage) SaveImpactAnalysis(ctx context.Context, a domain.ImpactAnalysis) error { return nil }
+func (m *MockStorage) SaveImpactAnalysis(ctx context.Context, a domain.ImpactAnalysis) error {
+	return nil
+}
 func (m *MockStorage) GetImpactAnalysisByEventID(ctx context.Context, id string) (*domain.ImpactAnalysis, error) {
 	return nil, nil
 }
@@ -69,6 +73,17 @@ func (m *MockStorage) GetAnalyzedEventIDs(ctx context.Context, eventIDs []string
 
 func (m *MockStorage) GetNamespaces(ctx context.Context) ([]string, error) {
 	return []string{"production", "staging"}, nil
+}
+
+func (m *MockStorage) SaveEventLink(ctx context.Context, link domain.EventLink) error { return nil }
+func (m *MockStorage) GetEventLinksByEventID(ctx context.Context, eventID string) ([]domain.EventLink, error) {
+	return nil, nil
+}
+func (m *MockStorage) GetEventLinksByExecutionID(ctx context.Context, executionEventID string) ([]domain.EventLink, error) {
+	return nil, nil
+}
+func (m *MockStorage) GetRecentConfigChangeEvents(ctx context.Context, service string, before time.Time, within time.Duration) ([]domain.ChangeEvent, error) {
+	return nil, nil
 }
 
 // MockMetrics for API tests
@@ -109,7 +124,7 @@ func TestPostEvent(t *testing.T) {
 
 	event := domain.ChangeEvent{ID: "test-1", Summary: "Test Event"}
 	body, _ := json.Marshal(event)
-	
+
 	res, err := http.Post(ts.URL+"/api/v1/events", "application/json", bytes.NewBuffer(body))
 	if err != nil {
 		t.Fatal(err)

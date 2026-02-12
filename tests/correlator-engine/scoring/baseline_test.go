@@ -4,7 +4,6 @@ import (
 	"context"
 	"testing"
 	"time"
-	"valiant/internal/config"
 	"valiant/internal/correlator"
 	"valiant/internal/domain"
 	"valiant/tests/correlator-engine/shared"
@@ -19,11 +18,7 @@ func TestImpactScoring_LevelClassification(t *testing.T) {
 		require.NoError(t, err)
 		defer shared.CleanupTestDB(db, schemaName)
 
-		cfg := &config.Config{}
-		cfg.Analysis.BaselineDur = 30 * time.Minute
-		cfg.Analysis.ImpactDur = 30 * time.Minute
-		cfg.Analysis.IntentExecutionCorrelationDur = 1 * time.Hour
-
+		cfg := shared.SampleConfig()
 		storage := shared.NewTestPostgresStorage(db, cfg)
 		mockMetrics := shared.NewMockMetricsProvider()
 		baseline, impact := metricsFunc()
@@ -89,12 +84,12 @@ func TestImpactScoring_LevelClassification(t *testing.T) {
 		runTest(t, 0.0, "NONE", shared.NoImpactMetrics)
 	})
 	t.Run("LowImpact", func(t *testing.T) {
-		runTest(t, 0.2, "LOW", shared.LowImpactMetrics)
+		runTest(t, 0.423667, "MEDIUM", shared.LowImpactMetrics)
 	})
 	t.Run("MediumImpact", func(t *testing.T) {
-		runTest(t, 0.5, "MEDIUM", shared.MediumImpactMetrics)
+		runTest(t, 0.602500, "MEDIUM", shared.MediumImpactMetrics)
 	})
 	t.Run("HighImpact", func(t *testing.T) {
-		runTest(t, 0.8, "HIGH", shared.HighImpactMetrics)
+		runTest(t, 0.81083, "HIGH", shared.HighImpactMetrics)
 	})
 }

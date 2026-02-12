@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"sort"
 	"strconv"
+	"strings"
 	"time"
 	"valiant/internal/config"
 	"valiant/internal/domain"
@@ -73,11 +75,25 @@ func (e *Engine) AnalyzeImpact(ctx context.Context, event domain.ChangeEvent) (d
 
 	analysis.Links = allLinks
 
+	// Populate LinkedCIEvent from intent links for convenience
+	if len(intentLinks) > 0 {
+		bestLink := intentLinks[0]
+		for _, link := range intentLinks[1:] {
+			if link.Confidence > bestLink.Confidence {
+				bestLink = link
+			}
+		}
+		linkedEvent, err := e.storage.GetChangeEventByID(ctx, bestLink.IntentEventID)
+		if err == nil {
+			analysis.LinkedCIEvent = &linkedEvent
+		}
+	}
+
 	// Orphan detection: orphaned if no intent-execution links exist for execution events
 	if event.IsExecution {
 		hasIntentLink := false
 		for _, link := range intentLinks {
-			if link.LinkType == "sha_match" || link.LinkType == "image_tag_match" {
+			if link.LinkType == "sha_match" || link.LinkType == "image_tag_match" || link.LinkType == "image_sha_inferred" {
 				hasIntentLink = true
 				break
 			}
@@ -172,10 +188,10 @@ func (e *Engine) CreateIntentExecutionLinks(ctx context.Context, event domain.Ch
 		return nil, fmt.Errorf("failed to check existing links: %w", err)
 	}
 
-	// Filter for SHA/tag links
+	// Filter for SHA/tag/inferred links
 	var intentLinks []domain.EventLink
 	for _, link := range existingLinks {
-		if link.LinkType == "sha_match" || link.LinkType == "image_tag_match" {
+		if link.LinkType == "sha_match" || link.LinkType == "image_tag_match" || link.LinkType == "image_sha_inferred" {
 			intentLinks = append(intentLinks, link)
 		}
 	}
@@ -210,36 +226,49 @@ func (e *Engine) CreateIntentExecutionLinks(ctx context.Context, event domain.Ch
 		return nil, fmt.Errorf("failed to search for intent events: %w", err)
 	}
 
-	// Create links for matching CI events
+	// Collect matches per tier, then pick the closest in time for each tier
 	var links []domain.EventLink
 	now := time.Now().UTC()
 
-	for _, ciEvent := range ciEvents {
-		// Check for SHA match
-		if sha, ok := event.Metadata["git_commit_sha"]; ok && sha != "" {
+	// Tier 1: SHA match (confidence 1.0)
+	var shaMatches []domain.ChangeEvent
+	if sha, ok := event.Metadata["git_commit_sha"]; ok && sha != "" {
+		for _, ciEvent := range ciEvents {
 			if ciSha, ok := ciEvent.Metadata["git_commit_sha"]; ok && ciSha == sha {
-				link := domain.EventLink{
-					ID:               uuid.New().String(),
-					IntentEventID:    ciEvent.ID,
-					ExecutionEventID: event.ID,
-					LinkType:         "sha_match",
-					Confidence:       1.0,
-					CreatedAt:        now,
-					Metadata: map[string]string{
-						"git_commit_sha": sha,
-					},
-				}
-				if err := e.storage.SaveEventLink(ctx, link); err != nil {
-					return nil, fmt.Errorf("failed to save SHA link: %w", err)
-				}
-				links = append(links, link)
+				shaMatches = append(shaMatches, ciEvent)
 			}
 		}
+	}
+	if len(shaMatches) > 1 {
+		sortByClosest(shaMatches, event.Timestamp)
+		shaMatches = shaMatches[:1]
+	}
+	for _, ciEvent := range shaMatches {
+		sha := event.Metadata["git_commit_sha"]
+		link := domain.EventLink{
+			ID:               uuid.New().String(),
+			IntentEventID:    ciEvent.ID,
+			ExecutionEventID: event.ID,
+			LinkType:         "sha_match",
+			Confidence:       1.0,
+			CreatedAt:        now,
+			Metadata: map[string]string{
+				"git_commit_sha": sha,
+				"reason":         fmt.Sprintf("Exact git_commit_sha annotation match: %s", sha),
+			},
+		}
+		if err := e.storage.SaveEventLink(ctx, link); err != nil {
+			return nil, fmt.Errorf("failed to save SHA link: %w", err)
+		}
+		links = append(links, link)
+	}
 
-		// Check for image tag match (separate link)
-		if tag, ok := event.Metadata["image_tag"]; ok && tag != "" {
+	// Tier 2: Image tag match (confidence 0.9)
+	if tag, ok := event.Metadata["image_tag"]; ok && tag != "" {
+		var tagMatches []domain.ChangeEvent
+		for _, ciEvent := range ciEvents {
 			if ciTag, ok := ciEvent.Metadata["image_tag"]; ok && ciTag == tag {
-				// Avoid duplicate link if same CI event already linked by SHA
+				// Skip if already linked by SHA
 				alreadyLinked := false
 				for _, existing := range links {
 					if existing.IntentEventID == ciEvent.ID {
@@ -248,23 +277,40 @@ func (e *Engine) CreateIntentExecutionLinks(ctx context.Context, event domain.Ch
 					}
 				}
 				if !alreadyLinked {
-					link := domain.EventLink{
-						ID:               uuid.New().String(),
-						IntentEventID:    ciEvent.ID,
-						ExecutionEventID: event.ID,
-						LinkType:         "image_tag_match",
-						Confidence:       0.9,
-						CreatedAt:        now,
-						Metadata: map[string]string{
-							"image_tag": tag,
-						},
-					}
-					if err := e.storage.SaveEventLink(ctx, link); err != nil {
-						return nil, fmt.Errorf("failed to save tag link: %w", err)
-					}
-					links = append(links, link)
+					tagMatches = append(tagMatches, ciEvent)
 				}
 			}
+		}
+		if len(tagMatches) > 1 {
+			sortByClosest(tagMatches, event.Timestamp)
+			tagMatches = tagMatches[:1]
+		}
+		for _, ciEvent := range tagMatches {
+			link := domain.EventLink{
+				ID:               uuid.New().String(),
+				IntentEventID:    ciEvent.ID,
+				ExecutionEventID: event.ID,
+				LinkType:         "image_tag_match",
+				Confidence:       0.9,
+				CreatedAt:        now,
+				Metadata: map[string]string{
+					"image_tag": tag,
+					"reason":    fmt.Sprintf("Exact image_tag match: %s", tag),
+				},
+			}
+			if err := e.storage.SaveEventLink(ctx, link); err != nil {
+				return nil, fmt.Errorf("failed to save tag link: %w", err)
+			}
+			links = append(links, link)
+		}
+	}
+
+	// Tier 3: Image tag contains SHA (fuzzy but high-signal)
+	// Only attempt if no exact match was found
+	if len(links) == 0 {
+		links, err = e.tryImageShaInferredLinks(ctx, event, from, to, now, links)
+		if err != nil {
+			return nil, err
 		}
 	}
 
@@ -308,29 +354,32 @@ func (e *Engine) LinkIntentToExecutions(ctx context.Context, event domain.Change
 		return nil, fmt.Errorf("failed to search for execution events: %w", err)
 	}
 
-	// Create links for matching execution events
+	// Filter out already-linked execution events and collect pre-existing links
 	var links []domain.EventLink
 	now := time.Now().UTC()
+	var unlinkableExecs []domain.ChangeEvent
 
 	for _, execEvent := range executionEvents {
-		// Check if link already exists (idempotent)
 		existingLinks, err := e.storage.GetEventLinksByExecutionID(ctx, execEvent.ID)
 		if err != nil {
 			return nil, fmt.Errorf("failed to check existing links: %w", err)
 		}
 		alreadyLinked := false
 		for _, link := range existingLinks {
-			if link.IntentEventID == event.ID && (link.LinkType == "sha_match" || link.LinkType == "image_tag_match") {
+			if link.IntentEventID == event.ID && (link.LinkType == "sha_match" || link.LinkType == "image_tag_match" || link.LinkType == "image_sha_inferred") {
 				alreadyLinked = true
 				links = append(links, link)
 				break
 			}
 		}
-		if alreadyLinked {
-			continue
+		if !alreadyLinked {
+			unlinkableExecs = append(unlinkableExecs, execEvent)
 		}
+	}
 
-		// Check for SHA match
+	// For each execution event, create links with closest-in-time tiebreaker per tier
+	for _, execEvent := range unlinkableExecs {
+		// Tier 1: SHA match (confidence 1.0)
 		if sha, ok := event.Metadata["git_commit_sha"]; ok && sha != "" {
 			if execSha, ok := execEvent.Metadata["git_commit_sha"]; ok && execSha == sha {
 				link := domain.EventLink{
@@ -342,17 +391,18 @@ func (e *Engine) LinkIntentToExecutions(ctx context.Context, event domain.Change
 					CreatedAt:        now,
 					Metadata: map[string]string{
 						"git_commit_sha": sha,
+						"reason":         fmt.Sprintf("Exact git_commit_sha annotation match: %s", sha),
 					},
 				}
 				if err := e.storage.SaveEventLink(ctx, link); err != nil {
 					return nil, fmt.Errorf("failed to save SHA link: %w", err)
 				}
 				links = append(links, link)
-				continue // Don't also create image_tag link for same pair
+				continue
 			}
 		}
 
-		// Check for image tag match
+		// Tier 2: Image tag match (confidence 0.9)
 		if tag, ok := event.Metadata["image_tag"]; ok && tag != "" {
 			if execTag, ok := execEvent.Metadata["image_tag"]; ok && execTag == tag {
 				link := domain.EventLink{
@@ -364,6 +414,7 @@ func (e *Engine) LinkIntentToExecutions(ctx context.Context, event domain.Change
 					CreatedAt:        now,
 					Metadata: map[string]string{
 						"image_tag": tag,
+						"reason":    fmt.Sprintf("Exact image_tag match: %s", tag),
 					},
 				}
 				if err := e.storage.SaveEventLink(ctx, link); err != nil {
@@ -371,6 +422,139 @@ func (e *Engine) LinkIntentToExecutions(ctx context.Context, event domain.Change
 				}
 				links = append(links, link)
 			}
+		}
+	}
+
+	// Tier 3: Image tag contains SHA (fuzzy but high-signal)
+	// Only attempt if no exact match was found
+	if len(links) == 0 {
+		links, err = e.tryImageShaInferredLinksReverse(ctx, event, from, to, now, links)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return links, nil
+}
+
+// tryImageShaInferredLinks attempts tier 3 matching: checks if execution image_tag contains
+// the intent's git_commit_sha prefix. Only called when exact match tiers yield no results.
+func (e *Engine) tryImageShaInferredLinks(ctx context.Context, event domain.ChangeEvent, from, to time.Time, now time.Time, links []domain.EventLink) ([]domain.EventLink, error) {
+	execImageTag := event.Metadata["image_tag"]
+	if execImageTag == "" {
+		return links, nil
+	}
+
+	// Extract tag portion (after last ":")
+	tag := execImageTag
+	if idx := strings.LastIndex(execImageTag, ":"); idx >= 0 {
+		tag = execImageTag[idx+1:]
+	}
+	if len(tag) < 7 {
+		return links, nil
+	}
+
+	// Search for intent events without metadata filter (broader search)
+	ciEvents, _, err := e.storage.GetChangeEvents(ctx, map[string]interface{}{
+		"is_intent_only": true,
+		"from_timestamp": from,
+		"to_timestamp":   to,
+		"limit":          50,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to search for intent events (inferred): %w", err)
+	}
+
+	for _, ciEvent := range ciEvents {
+		ciSha, ok := ciEvent.Metadata["git_commit_sha"]
+		if !ok || len(ciSha) < 7 {
+			continue
+		}
+		// Check if tag contains SHA prefix
+		prefixLen := len(ciSha)
+		if prefixLen > len(tag) {
+			prefixLen = len(tag)
+		}
+		if strings.Contains(tag, ciSha[:prefixLen]) {
+			link := domain.EventLink{
+				ID:               uuid.New().String(),
+				IntentEventID:    ciEvent.ID,
+				ExecutionEventID: event.ID,
+				LinkType:         "image_sha_inferred",
+				Confidence:       0.85,
+				CreatedAt:        now,
+				Metadata: map[string]string{
+					"image_tag":      execImageTag,
+					"git_commit_sha": ciSha,
+					"reason":         fmt.Sprintf("Image tag '%s' contains commit SHA prefix", tag),
+				},
+			}
+			if err := e.storage.SaveEventLink(ctx, link); err != nil {
+				return nil, fmt.Errorf("failed to save inferred SHA link: %w", err)
+			}
+			links = append(links, link)
+			break // One inferred link per execution event
+		}
+	}
+
+	return links, nil
+}
+
+// tryImageShaInferredLinksReverse is the reverse direction: from intent, find executions
+// whose image_tag contains the intent's git_commit_sha.
+func (e *Engine) tryImageShaInferredLinksReverse(ctx context.Context, event domain.ChangeEvent, from, to time.Time, now time.Time, links []domain.EventLink) ([]domain.EventLink, error) {
+	ciSha := event.Metadata["git_commit_sha"]
+	if ciSha == "" || len(ciSha) < 7 {
+		return links, nil
+	}
+
+	// Search for execution events without metadata filter (broader search)
+	execEvents, _, err := e.storage.GetChangeEvents(ctx, map[string]interface{}{
+		"is_execution_only": true,
+		"from_timestamp":    from,
+		"to_timestamp":      to,
+		"limit":             50,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to search for execution events (inferred): %w", err)
+	}
+
+	for _, execEvent := range execEvents {
+		execImageTag := execEvent.Metadata["image_tag"]
+		if execImageTag == "" {
+			continue
+		}
+
+		tag := execImageTag
+		if idx := strings.LastIndex(execImageTag, ":"); idx >= 0 {
+			tag = execImageTag[idx+1:]
+		}
+		if len(tag) < 7 {
+			continue
+		}
+
+		prefixLen := len(ciSha)
+		if prefixLen > len(tag) {
+			prefixLen = len(tag)
+		}
+		if strings.Contains(tag, ciSha[:prefixLen]) {
+			link := domain.EventLink{
+				ID:               uuid.New().String(),
+				IntentEventID:    event.ID,
+				ExecutionEventID: execEvent.ID,
+				LinkType:         "image_sha_inferred",
+				Confidence:       0.85,
+				CreatedAt:        now,
+				Metadata: map[string]string{
+					"image_tag":      execImageTag,
+					"git_commit_sha": ciSha,
+					"reason":         fmt.Sprintf("Image tag '%s' contains commit SHA prefix", tag),
+				},
+			}
+			if err := e.storage.SaveEventLink(ctx, link); err != nil {
+				return nil, fmt.Errorf("failed to save inferred SHA link: %w", err)
+			}
+			links = append(links, link)
 		}
 	}
 
@@ -452,6 +636,7 @@ func (e *Engine) CreateConfigTriggerLinks(ctx context.Context, event domain.Chan
 			Metadata: map[string]string{
 				"config_event_type": configEvent.ChangeType,
 				"time_delta_sec":    strconv.FormatInt(int64(timeDelta.Seconds()), 10),
+				"reason":            fmt.Sprintf("%s %s changed %s before rollout", configEvent.ChangeType, configEvent.Summary, timeDelta.Round(time.Second)),
 			},
 		}
 
@@ -467,14 +652,14 @@ func (e *Engine) CreateConfigTriggerLinks(ctx context.Context, event domain.Chan
 // changeTypeWeights maps change types to risk weights.
 // Full image deployments carry the highest risk; config changes are lower.
 var changeTypeWeights = map[string]float64{
-	"deployment_rollout":   1.0,
-	"statefulset_rollout":  1.0,
-	"build_success":        0.8,
-	"tag_created":          0.7,
-	"release_published":    0.7,
-	"branch_merged":        0.6,
-	"configmap_update":     0.5,
-	"secret_update":        0.5,
+	"deployment_rollout":  1.0,
+	"statefulset_rollout": 1.0,
+	"build_success":       0.8,
+	"tag_created":         0.7,
+	"release_published":   0.7,
+	"branch_merged":       0.6,
+	"configmap_update":    0.5,
+	"secret_update":       0.5,
 }
 
 // RankChanges ranks concurrent changes for a service within a time range
@@ -556,6 +741,21 @@ func (e *Engine) RankChanges(ctx context.Context, service string, from, to time.
 	return ranked, nil
 }
 
+// sortByClosest sorts change events by temporal proximity to the reference time (closest first).
+func sortByClosest(events []domain.ChangeEvent, reference time.Time) {
+	sort.Slice(events, func(i, j int) bool {
+		diffI := events[i].Timestamp.Sub(reference)
+		if diffI < 0 {
+			diffI = -diffI
+		}
+		diffJ := events[j].Timestamp.Sub(reference)
+		if diffJ < 0 {
+			diffJ = -diffJ
+		}
+		return diffI < diffJ
+	})
+}
+
 // sortRankedChanges sorts ranked changes by likelihood score descending.
 func sortRankedChanges(ranked []domain.RankedChange) {
 	for i := 1; i < len(ranked); i++ {
@@ -567,11 +767,11 @@ func sortRankedChanges(ranked []domain.RankedChange) {
 
 func calculateDeltas(baseline, impact domain.MetricValues) domain.MetricValues {
 	deltas := domain.MetricValues{
-		ErrorRate:  calculateDelta(baseline.ErrorRate, impact.ErrorRate),
-		LatencyP95: calculateDelta(baseline.LatencyP95, impact.LatencyP95),
-		RPS:        calculateDelta(baseline.RPS, impact.RPS),
-		CPU:        calculateDelta(baseline.CPU, impact.CPU),
-		Memory:     calculateDelta(baseline.Memory, impact.Memory),
+		ErrorRate:         calculateDelta(baseline.ErrorRate, impact.ErrorRate),
+		LatencyP95:        calculateDelta(baseline.LatencyP95, impact.LatencyP95),
+		RPS:               calculateDelta(baseline.RPS, impact.RPS),
+		CPU:               calculateDelta(baseline.CPU, impact.CPU),
+		Memory:            calculateDelta(baseline.Memory, impact.Memory),
 		AdditionalMetrics: make(map[string]float64), // Initialize the map
 	}
 

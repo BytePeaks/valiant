@@ -10,7 +10,7 @@ import (
 )
 
 // We reuse MockStorage and MockMetrics from engine_test.go if they were in the same package,
-// but they are in correlator_test. Since they are helper types, I will redefine a minimal 
+// but they are in correlator_test. Since they are helper types, I will redefine a minimal
 // version or move them to a shared test_helpers file. For now, I'll redefine what's needed.
 
 type WorkerMockStorage struct {
@@ -36,12 +36,12 @@ func TestWorker_RunBatch(t *testing.T) {
 			{ID: "evt-too-soon", Timestamp: time.Now()},
 		},
 	}
-	
+
 	// Metrics return something so analysis succeeds for the ready one
 	metrics := &ControllableMetrics{
 		Calls: []domain.MetricValues{{RPS: 10}, {RPS: 10}},
 	}
-	
+
 	engine := correlator.NewEngine(store, metrics, cfg)
 	worker := correlator.NewWorker(engine, time.Millisecond) // Pass a dummy polling interval
 

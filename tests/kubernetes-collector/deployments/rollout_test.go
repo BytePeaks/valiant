@@ -61,7 +61,7 @@ func TestDeploymentRolloutDetection(t *testing.T) {
 			"Deployment test-app rollout completed via cicd")
 		shared.AssertChangeEventMetadata(t, event, "namespace", namespace)
 		shared.AssertChangeEventMetadata(t, event, "image", image)
-		shared.AssertChangeEventMetadata(t, event, "git_sha", sha)
+		shared.AssertChangeEventMetadata(t, event, "git_commit_sha", sha)
 		shared.AssertChangeEventAffectedServices(t, event, []string{deploymentName})
 		require.NotNil(t, event.EndTime, "Expected EndTime to be populated")
 	case <-time.After(1 * time.Second):

@@ -78,6 +78,7 @@ func TestStatefulSetNamespaceFilter_Included(t *testing.T) {
 
 	// Update generation to trigger event
 	ss.Generation = 2
+	ss.Annotations["valiant.io/git-sha"] = "sha-456"
 	shared.SetStatefulSetReady(ss)
 	_, err = fakeClient.AppsV1().StatefulSets("production").Update(context.Background(), ss, metav1.UpdateOptions{})
 	require.NoError(t, err)

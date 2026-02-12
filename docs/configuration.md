@@ -120,6 +120,9 @@ analysis:
 
   # Duration to look back from an execution event to find a corresponding intent (CI) event.
   # If no match is found within this window, the execution event is marked as orphaned.
+  # This window also provides implicit clock skew tolerance: if CI and cluster clocks
+  # differ by less than this duration, linking still works. Increase if you observe
+  # orphaned events caused by clock drift rather than missing CI signals.
   intent_execution_correlation_window: "1h"
 ```
 
@@ -174,16 +177,6 @@ linking:
     metadata_has: ["repository_url", "git_commit_sha"]
     url_template: "{{ .repository_url }}/commit/{{ .git_commit_sha }}"
 
-### Worker
-
-```yaml
-worker:
-  # How often the analysis worker checks for new events to process.
-  # Supports standard Go durations (e.g., "1m", "30s", "1h").
-  polling_interval: "5m"
-```
-
-
   - name: "View Build on Jenkins"
     metadata_has: ["jenkins_url", "jenkins_job_name", "jenkins_build_id"]
     url_template: "{{ .jenkins_url }}/job/{{ .jenkins_job_name }}/{{ .jenkins_build_id }}"
@@ -191,6 +184,15 @@ worker:
   - name: "Open ArgoCD Application"
     metadata_has: ["argocd_url", "argocd_app_name"]
     url_template: "{{ .argocd_url }}/applications/{{ .argocd_app_name }}"
+```
+
+### Worker
+
+```yaml
+worker:
+  # How often the analysis worker checks for new events to process.
+  # Supports standard Go durations (e.g., "1m", "30s", "1h").
+  polling_interval: "5m"
 ```
 
 **Template Variables:**

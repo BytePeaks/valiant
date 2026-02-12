@@ -22,6 +22,7 @@ export interface ChangeEvent {
   linked_intent?: ChangeEvent;       // The CI event that triggered this execution
   link_type?: string;                // "sha_match" or "image_tag_match"
   link_confidence?: number;          // 0.0 to 1.0
+  link_reason?: string;              // Human-readable reason from link metadata
 }
 
 export interface MetricValues {

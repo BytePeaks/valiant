@@ -3,7 +3,9 @@ package storage
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -106,9 +108,78 @@ func (s *PostgresStorage) SaveChangeEvent(ctx context.Context, event domain.Chan
 		)
 	}
 
+	metadataJSON, err := json.Marshal(event.Metadata)
+	if err != nil {
+		return fmt.Errorf("failed to marshal metadata: %w", err)
+	}
+
+	var blastRadiusJSON []byte
+	if event.BlastRadius != nil {
+		blastRadiusJSON, err = json.Marshal(event.BlastRadius)
+		if err != nil {
+			return fmt.Errorf("failed to marshal blast_radius: %w", err)
+		}
+	}
+
+	// Compute dedup hash for API events with linking metadata (not K8s collector events which have deterministic IDs).
+	// Includes timestamp (truncated to minute) so that distinct events at different times are not falsely deduped,
+	// while true retries (same content within the same minute) are still caught.
+	var dedupHash sql.NullString
+	if event.Source != "kubernetes" {
+		imageTag := event.Metadata["image_tag"]
+		gitSha := event.Metadata["git_commit_sha"]
+		if imageTag != "" || gitSha != "" {
+			raw := strings.Join(event.AffectedServices, ",") + "|" + event.ChangeType + "|" + imageTag + "|" + gitSha + "|" + event.Timestamp.UTC().Truncate(time.Minute).Format(time.RFC3339)
+			hash := sha256.Sum256([]byte(raw))
+			dedupHash = sql.NullString{String: hex.EncodeToString(hash[:]), Valid: true}
+		}
+	}
+
+	// Stage 1: Try insert with dedup_hash conflict check (silently drops content-duplicates)
+	if dedupHash.Valid {
+		dedupQuery := `
+			INSERT INTO change_events (id, source, trigger_type, execution_id, change_type, timestamp, end_time, affected_services, metadata, summary, status, invalid_reason, skew_seconds, blast_radius, is_intent, is_execution, dedup_hash)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+			ON CONFLICT (dedup_hash) WHERE dedup_hash IS NOT NULL DO NOTHING
+		`
+		result, err := s.db.ExecContext(ctx, dedupQuery,
+			event.ID,
+			event.Source,
+			event.TriggerType,
+			event.ExecutionID,
+			event.ChangeType,
+			event.Timestamp,
+			event.EndTime,
+			pq.Array(event.AffectedServices),
+			metadataJSON,
+			event.Summary,
+			event.Status,
+			sql.NullString{String: event.InvalidReason, Valid: event.InvalidReason != ""},
+			sql.NullInt32{Int32: int32(event.SkewSeconds), Valid: event.SkewSeconds != 0},
+			blastRadiusJSON,
+			event.IsIntent,
+			event.IsExecution,
+			dedupHash,
+		)
+		if err != nil {
+			// If this fails due to id conflict, fall through to the upsert below
+			if !isUniqueViolation(err) {
+				return fmt.Errorf("failed to save change event: %w", err)
+			}
+		} else {
+			rowsAffected, _ := result.RowsAffected()
+			if rowsAffected == 0 {
+				log.Printf("Duplicate event suppressed by dedup_hash for event_id=%s service=%s", event.ID, strings.Join(event.AffectedServices, ","))
+				return nil
+			}
+			return nil // Successfully inserted
+		}
+	}
+
+	// Stage 2: Standard upsert on id (handles same-ID re-submissions and K8s events)
 	query := `
-		INSERT INTO change_events (id, source, trigger_type, execution_id, change_type, timestamp, end_time, affected_services, metadata, summary, status, invalid_reason, skew_seconds, blast_radius, is_intent, is_execution)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+		INSERT INTO change_events (id, source, trigger_type, execution_id, change_type, timestamp, end_time, affected_services, metadata, summary, status, invalid_reason, skew_seconds, blast_radius, is_intent, is_execution, dedup_hash)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
 		ON CONFLICT (id) DO UPDATE SET
 			source = EXCLUDED.source,
 			trigger_type = EXCLUDED.trigger_type,
@@ -124,21 +195,9 @@ func (s *PostgresStorage) SaveChangeEvent(ctx context.Context, event domain.Chan
 			skew_seconds = EXCLUDED.skew_seconds,
 			blast_radius = EXCLUDED.blast_radius,
 			is_intent = EXCLUDED.is_intent,
-			is_execution = EXCLUDED.is_execution
+			is_execution = EXCLUDED.is_execution,
+			dedup_hash = EXCLUDED.dedup_hash
 	`
-
-	metadataJSON, err := json.Marshal(event.Metadata)
-	if err != nil {
-		return fmt.Errorf("failed to marshal metadata: %w", err)
-	}
-
-	var blastRadiusJSON []byte
-	if event.BlastRadius != nil {
-		blastRadiusJSON, err = json.Marshal(event.BlastRadius)
-		if err != nil {
-			return fmt.Errorf("failed to marshal blast_radius: %w", err)
-		}
-	}
 
 	_, err = s.db.ExecContext(ctx, query,
 		event.ID,
@@ -157,6 +216,7 @@ func (s *PostgresStorage) SaveChangeEvent(ctx context.Context, event domain.Chan
 		blastRadiusJSON,
 		event.IsIntent,
 		event.IsExecution,
+		dedupHash,
 	)
 
 	if err != nil {
@@ -164,6 +224,14 @@ func (s *PostgresStorage) SaveChangeEvent(ctx context.Context, event domain.Chan
 	}
 
 	return nil
+}
+
+// isUniqueViolation checks if a PostgreSQL error is a unique constraint violation.
+func isUniqueViolation(err error) bool {
+	if pqErr, ok := err.(*pq.Error); ok {
+		return pqErr.Code == "23505"
+	}
+	return false
 }
 
 // generateContextualLinks creates deep links for a change event based on configured templates.
@@ -279,7 +347,7 @@ func (s *PostgresStorage) GetChangeEvents(ctx context.Context, filters map[strin
 		whereClauses = append(whereClauses, `is_execution = TRUE AND EXISTS (
 			SELECT 1 FROM event_links el
 			WHERE el.execution_event_id = change_events.id
-			AND el.link_type IN ('sha_match', 'image_tag_match')
+			AND el.link_type IN ('sha_match', 'image_tag_match', 'image_sha_inferred')
 		)`)
 	}
 
@@ -483,7 +551,7 @@ func (s *PostgresStorage) GetServices(ctx context.Context, namespace string, lin
 		whereClauses = append(whereClauses, `is_execution = TRUE AND EXISTS (
 			SELECT 1 FROM event_links el
 			WHERE el.execution_event_id = change_events.id
-			AND el.link_type IN ('sha_match', 'image_tag_match')
+			AND el.link_type IN ('sha_match', 'image_tag_match', 'image_sha_inferred')
 		)`)
 	}
 

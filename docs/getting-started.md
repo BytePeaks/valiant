@@ -102,9 +102,9 @@ metadata:
 
 If this annotation is missing, Valiant ignores the rollout entirely.
 
-### 3. Unique Fingerprint (Recommended)
+### 3. Unique Fingerprint (Recommended for Highest Confidence)
 
-For full intent-execution linking, your CI/CD tool should set a unique fingerprint on each deployment:
+For the highest-confidence intent-execution linking (`sha_match` at 1.0), your CI/CD tool should set a unique fingerprint on each deployment:
 
 ```yaml
 metadata:
@@ -114,9 +114,11 @@ metadata:
 ```
 
 This allows Valiant to:
-- Link CI builds to K8s rollouts via matching SHAs
+- Link CI builds to K8s rollouts via exact SHA matching (1.0 confidence)
 - Detect orphaned deployments (no corresponding CI signal)
 - Filter out manual edits where the fingerprint didn't change
+
+**Zero-config alternative**: Even without `valiant.io/git-sha`, Valiant auto-extracts the container image from the pod spec. If your CI pipeline sends `image_tag` in its POST payload matching the deployed image, linking happens automatically at 0.9 confidence (`image_tag_match`). If the image tag contains the commit SHA, linking works at 0.85 confidence (`image_sha_inferred`).
 
 ---
 

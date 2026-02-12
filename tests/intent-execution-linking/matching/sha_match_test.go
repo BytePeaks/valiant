@@ -33,9 +33,9 @@ func TestSuccessfulLinking_ShaMatch(t *testing.T) {
 	ciEvent.Timestamp = time.Now().Add(-1 * time.Hour)
 	ciEvent.Metadata["git_commit_sha"] = matchingSha
 
-	// Execution event with the same commit SHA
+	// Execution event with the same commit SHA (must be old enough for impact window to close)
 	execEvent := common.SampleChangeEvent()
-	execEvent.Timestamp = time.Now().Add(-30 * time.Minute)
+	execEvent.Timestamp = time.Now().Add(-50 * time.Minute)
 	execEndTime := execEvent.Timestamp.Add(5 * time.Minute)
 	execEvent.EndTime = &execEndTime
 	execEvent.Metadata["git_commit_sha"] = matchingSha

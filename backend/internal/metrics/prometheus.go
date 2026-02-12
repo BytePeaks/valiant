@@ -15,10 +15,10 @@ import (
 )
 
 type PrometheusClient struct {
-	api     v1.API
-	queries map[string]string
+	api               v1.API
+	queries           map[string]string
 	additionalMetrics []config.PrometheusMetric
-	config  *config.Config // Add config reference
+	config            *config.Config // Add config reference
 }
 
 // NewPrometheusClient creates a new Prometheus client.
@@ -31,10 +31,10 @@ func NewPrometheusClient(apiURL string, queries map[string]string, additionalMet
 	}
 
 	return &PrometheusClient{
-		api:     v1.NewAPI(client),
-		queries: queries,
+		api:               v1.NewAPI(client),
+		queries:           queries,
 		additionalMetrics: additionalMetrics,
-		config:  cfg, // Store config
+		config:            cfg, // Store config
 	}, nil
 }
 
@@ -116,7 +116,6 @@ func (p *PrometheusClient) GetAvailableMetrics() []domain.MetricInfo {
 		}
 	}
 
-
 	for name, queryTemplate := range p.queries {
 		var icon string
 		switch name {
@@ -134,54 +133,52 @@ func (p *PrometheusClient) GetAvailableMetrics() []domain.MetricInfo {
 			icon = "Activity"
 		}
 		metrics = append(metrics, domain.MetricInfo{
-			Name: name,
-			Icon: icon,
+			Name:   name,
+			Icon:   icon,
 			Weight: normalizedWeights[name],
-			Type: "builtin", // Mark as built-in
+			Type:   "builtin",     // Mark as built-in
 			Promql: queryTemplate, // This holds the template for built-in queries
 		})
 	}
 	for _, metric := range p.additionalMetrics {
 		metrics = append(metrics, domain.MetricInfo{
-			Name: metric.Name,
-			Icon: metric.Icon,
+			Name:   metric.Name,
+			Icon:   metric.Icon,
 			Weight: normalizedWeights[metric.Name],
-			Type: "custom", // Mark as custom
-			Query: metric.Query, // This holds the actual query for custom metrics
+			Type:   "custom",     // Mark as custom
+			Query:  metric.Query, // This holds the actual query for custom metrics
 		})
 	}
 	return metrics
 }
-		
-		
-		func (p *PrometheusClient) GetAverageMetrics(ctx context.Context, services []string, start, end time.Time) (domain.MetricValues, error) {
-			duration := end.Sub(start)
-		
-			var values domain.MetricValues
-			values.AdditionalMetrics = make(map[string]float64)
-		
-			// Fetch core metrics
-			for metricKey := range p.queries {
-				val, err := p.QueryMetric(ctx, metricKey, services, end, duration)
-				if err != nil {
-					fmt.Printf("Error querying core metric %s: %v\n", metricKey, err)
-					continue
-				}
-				// This part needs to be smarter
-				switch metricKey {
-				case "error_rate":
-					values.ErrorRate = val
-				case "latency_p95_ms":
-					values.LatencyP95 = val * 1000 // Convert to ms
-				case "rps":
-					values.RPS = val
-				case "cpu":
-					values.CPU = val
-				case "memory":
-					values.Memory = val
-				}
-			}
-		
+
+func (p *PrometheusClient) GetAverageMetrics(ctx context.Context, services []string, start, end time.Time) (domain.MetricValues, error) {
+	duration := end.Sub(start)
+
+	var values domain.MetricValues
+	values.AdditionalMetrics = make(map[string]float64)
+
+	// Fetch core metrics
+	for metricKey := range p.queries {
+		val, err := p.QueryMetric(ctx, metricKey, services, end, duration)
+		if err != nil {
+			fmt.Printf("Error querying core metric %s: %v\n", metricKey, err)
+			continue
+		}
+		// This part needs to be smarter
+		switch metricKey {
+		case "error_rate":
+			values.ErrorRate = val
+		case "latency_p95_ms":
+			values.LatencyP95 = val * 1000 // Convert to ms
+		case "rps":
+			values.RPS = val
+		case "cpu":
+			values.CPU = val
+		case "memory":
+			values.Memory = val
+		}
+	}
 
 	// Fetch additional metrics
 	for _, metric := range p.additionalMetrics {

@@ -1,6 +1,7 @@
 package shared
 
 import (
+	"valiant/internal/config"
 	"valiant/internal/domain"
 	"valiant/tests/common"
 )
@@ -38,4 +39,9 @@ func MediumImpactMetrics() (baseline, impact domain.MetricValues) {
 // HighImpactMetrics creates metrics with severe degradation
 func HighImpactMetrics() (baseline, impact domain.MetricValues) {
 	return common.HighImpactMetrics()
+}
+
+// SampleConfig returns a fully populated config.Config object for testing.
+func SampleConfig() *config.Config {
+	return common.SampleConfig()
 }
