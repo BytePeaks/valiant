@@ -14,6 +14,7 @@ $SUITES = @(
     "kubernetes-collector",
     "deep-linking",
     "timestamp-guardrail"
+    "event-links"
 )
 
 $BACKEND_UNIT_TEST_NAME = "backend-unit-tests"

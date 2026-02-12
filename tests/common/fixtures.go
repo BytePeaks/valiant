@@ -48,6 +48,39 @@ func SampleCIEvent() domain.ChangeEvent {
 
 
 
+// SampleConfigChangeEvent creates a test ConfigMap update event
+func SampleConfigChangeEvent() domain.ChangeEvent {
+	return domain.ChangeEvent{
+		ID:               "test-config-change-1",
+		Source:           "kubernetes",
+		TriggerType:      "GitOps",
+		ChangeType:       "configmap_update",
+		Timestamp:        time.Now().Add(-45 * time.Minute),
+		AffectedServices: []string{"api-service"},
+		Metadata: map[string]string{
+			"namespace": "production",
+			"kind":      "ConfigMap",
+			"data_keys": "app.conf,db.conf",
+		},
+		Summary: "ConfigMap production/app-config data changed",
+	}
+}
+
+// SampleEventLink creates a test EventLink
+func SampleEventLink() domain.EventLink {
+	return domain.EventLink{
+		ID:               "test-link-1",
+		IntentEventID:    "test-ci-1",
+		ExecutionEventID: "test-event-1",
+		LinkType:         "sha_match",
+		Confidence:       1.0,
+		CreatedAt:        time.Now().UTC(),
+		Metadata: map[string]string{
+			"git_commit_sha": "abc123def456",
+		},
+	}
+}
+
 // SampleConfig returns a fully populated config.Config object with sensible defaults for testing purposes.
 func SampleConfig() *config.Config {
 	cfg := &config.Config{

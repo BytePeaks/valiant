@@ -29,7 +29,8 @@ SUITES=(
     "time-windows"
     "kubernetes-collector"
     "deep-linking"
-    "timestamp-guardrail" # Added new test suite
+    "timestamp-guardrail"
+    "event-links"
 )
 
 BACKEND_UNIT_TEST_NAME="backend-unit-tests"

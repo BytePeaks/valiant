@@ -93,6 +93,80 @@ func TestConfigMapChangeDetection(t *testing.T) {
 	assert.Empty(t, eventChan, "Expected only one event") // Ensure no extra events
 }
 
+func TestConfigMapChangeIncludesStatefulSetReferences(t *testing.T) {
+	// ARRANGE — ConfigMap referenced by both a Deployment and a StatefulSet
+	namespace := "default"
+	cmName := "shared-config"
+
+	initialCM := shared.SampleConfigMap(cmName, namespace, map[string]string{"key1": "value1"})
+
+	// Deployment referencing ConfigMap via volume
+	dep := shared.SampleDeployment("web-app", namespace, "nginx:1.21", "sha-1")
+	dep.Spec.Template.Spec.Volumes = []corev1.Volume{
+		{
+			Name: "config-vol",
+			VolumeSource: corev1.VolumeSource{
+				ConfigMap: &corev1.ConfigMapVolumeSource{
+					LocalObjectReference: corev1.LocalObjectReference{Name: cmName},
+				},
+			},
+		},
+	}
+
+	// StatefulSet referencing same ConfigMap via envFrom
+	ss := shared.SampleStatefulSet("db-app", namespace, "postgres:15", "sha-2")
+	ss.Spec.Template.Spec.Containers[0].EnvFrom = []corev1.EnvFromSource{
+		{
+			ConfigMapRef: &corev1.ConfigMapEnvSource{
+				LocalObjectReference: corev1.LocalObjectReference{Name: cmName},
+			},
+		},
+	}
+
+	fakeClient := fake.NewSimpleClientset([]runtime.Object{initialCM, dep, ss}...)
+
+	cfg := config.Config{}
+	cfg.Kubernetes.RequireAnnotation = true
+	cfg.Kubernetes.AllowedSources = []string{"cicd"}
+	cfg.Kubernetes.WatchConfigMaps = true
+	cfg.Kubernetes.Namespaces = []string{namespace}
+
+	coll, err := collector.NewKubernetesCollector(cfg, fakeClient)
+	require.NoError(t, err)
+
+	eventChan := make(chan domain.ChangeEvent, 5)
+
+	// Baseline collection
+	coll.CollectAndSend(context.Background(), eventChan)
+
+	// Update ConfigMap
+	updatedCM := initialCM.DeepCopy()
+	updatedCM.Data["key2"] = "new-value"
+	_, err = fakeClient.CoreV1().ConfigMaps(namespace).Update(context.Background(), updatedCM, metav1.UpdateOptions{})
+	require.NoError(t, err)
+
+	coll.CollectAndSend(context.Background(), eventChan)
+
+	// ASSERT — AffectedServices should include both Deployment and StatefulSet names
+	var configEvent *domain.ChangeEvent
+	timeout := time.After(1 * time.Second)
+	for {
+		select {
+		case event := <-eventChan:
+			if event.ChangeType == "configmap_update" {
+				configEvent = &event
+			}
+		case <-timeout:
+			goto done
+		}
+	}
+done:
+
+	require.NotNil(t, configEvent, "Expected a configmap_update event")
+	assert.Contains(t, configEvent.AffectedServices, "web-app", "Should include referencing Deployment")
+	assert.Contains(t, configEvent.AffectedServices, "db-app", "Should include referencing StatefulSet")
+}
+
 func TestConfigMapNoChangeEventIfNoDataChange(t *testing.T) {
 	// ARRANGE
 	namespace := "default"
