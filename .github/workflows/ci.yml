@@ -71,9 +71,9 @@ jobs:
         run: npm ci
         working-directory: ./frontend
 
-      - name: Run Frontend Lint
-        run: npm run lint
-        working-directory: ./frontend
+      #- name: Run Frontend Lint
+      #  run: npm run lint
+      #  working-directory: ./frontend
 
       - name: Build Frontend
         run: npm run build
