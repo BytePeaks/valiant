@@ -190,7 +190,7 @@ func TestKubernetesCollector_FingerprintDeduplication(t *testing.T) {
 
 	// 3. Metadata change (gen 2, sha A) -> SHOULD IGNORE
 	dep.Generation = 2
-	dep.ResourceVersion = "2" 
+	dep.ResourceVersion = "2"
 	if _, err := client.AppsV1().Deployments("default").Update(ctx, dep, metav1.UpdateOptions{}); err != nil {
 		t.Fatal(err)
 	}
@@ -697,6 +697,227 @@ done:
 	}
 }
 
+func TestKubernetesCollector_ArgoCDAutoDetection(t *testing.T) {
+	cfg := config.Config{}
+	// This test now verifies that auto-detection is *disabled* and we must rely on explicit annotations.
+	// For these tests, we will not provide a `valiant.io/source` annotation.
+	cfg.Kubernetes.AllowedSources = []string{"argocd"}
+
+	t.Run("no auto-detect via tracking-id annotation", func(t *testing.T) {
+		dep := &appsv1.Deployment{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "argocd-app",
+				Namespace: "default",
+				Annotations: map[string]string{
+					"argocd.argoproj.io/tracking-id": "my-app:apps/Deployment:default/argocd-app",
+				},
+				Generation: 1,
+				UID:        "test-uid",
+			},
+			Status: appsv1.DeploymentStatus{
+				Conditions: []appsv1.DeploymentCondition{
+					{Type: "Available", Status: "True", LastUpdateTime: metav1.Now()},
+					{Type: "Progressing", Reason: "NewReplicaSetAvailable"},
+				},
+			},
+		}
+
+		client := fake.NewSimpleClientset(dep)
+		coll, err := collector.NewKubernetesCollector(cfg, client)
+		if err != nil {
+			t.Fatal(err)
+		}
+		eventChan := make(chan domain.ChangeEvent, 10)
+		ctx := context.Background()
+
+		coll.CollectAndSend(ctx, eventChan)
+
+		select {
+		case event := <-eventChan:
+			if event.TriggerType != "kubernetes-api" {
+				t.Errorf("expected fallback TriggerType 'kubernetes-api', got %q", event.TriggerType)
+			}
+			if name, ok := event.Metadata["argocd_app_name"]; ok && name != "" {
+				t.Errorf("expected argocd_app_name to be empty, got %q", name)
+			}
+			if intentSource, ok := event.Metadata["intent_source"]; ok && intentSource != "" {
+				t.Errorf("expected empty intent_source, got %q", intentSource)
+			}
+		case <-time.After(500 * time.Millisecond):
+			t.Fatal("timeout waiting for event")
+		}
+	})
+
+	t.Run("no auto-detect via managed-by annotation", func(t *testing.T) {
+		dep := &appsv1.Deployment{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "managed-app",
+				Namespace: "default",
+				Annotations: map[string]string{
+					"argocd.argoproj.io/managed-by": "argocd-instance",
+				},
+				Generation: 1,
+				UID:        "test-uid-2",
+			},
+			Status: appsv1.DeploymentStatus{
+				Conditions: []appsv1.DeploymentCondition{
+					{Type: "Available", Status: "True", LastUpdateTime: metav1.Now()},
+					{Type: "Progressing", Reason: "NewReplicaSetAvailable"},
+				},
+			},
+		}
+
+		client := fake.NewSimpleClientset(dep)
+		coll, err := collector.NewKubernetesCollector(cfg, client)
+		if err != nil {
+			t.Fatal(err)
+		}
+		eventChan := make(chan domain.ChangeEvent, 10)
+		ctx := context.Background()
+
+		coll.CollectAndSend(ctx, eventChan)
+
+		select {
+		case event := <-eventChan:
+			if event.TriggerType != "kubernetes-api" {
+				t.Errorf("expected fallback TriggerType 'kubernetes-api', got %q", event.TriggerType)
+			}
+		case <-time.After(500 * time.Millisecond):
+			t.Fatal("timeout waiting for event")
+		}
+	})
+
+	t.Run("no auto-detect via instance label", func(t *testing.T) {
+		dep := &appsv1.Deployment{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "labeled-app",
+				Namespace: "default",
+				Labels: map[string]string{
+					"app.kubernetes.io/instance": "my-argo-app",
+				},
+				Generation: 1,
+				UID:        "test-uid-3",
+			},
+			Status: appsv1.DeploymentStatus{
+				Conditions: []appsv1.DeploymentCondition{
+					{Type: "Available", Status: "True", LastUpdateTime: metav1.Now()},
+					{Type: "Progressing", Reason: "NewReplicaSetAvailable"},
+				},
+			},
+		}
+
+		client := fake.NewSimpleClientset(dep)
+		coll, err := collector.NewKubernetesCollector(cfg, client)
+		if err != nil {
+			t.Fatal(err)
+		}
+		eventChan := make(chan domain.ChangeEvent, 10)
+		ctx := context.Background()
+
+		coll.CollectAndSend(ctx, eventChan)
+
+		select {
+		case event := <-eventChan:
+			if event.TriggerType != "kubernetes-api" {
+				t.Errorf("expected fallback TriggerType 'kubernetes-api', got %q", event.TriggerType)
+			}
+			if name, ok := event.Metadata["argocd_app_name"]; ok && name != "" {
+				t.Errorf("expected argocd_app_name to be empty, got %q", name)
+			}
+		case <-time.After(500 * time.Millisecond):
+			t.Fatal("timeout waiting for event")
+		}
+	})
+
+	t.Run("explicit annotation takes priority over ArgoCD labels", func(t *testing.T) {
+		dep := &appsv1.Deployment{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "priority-app",
+				Namespace: "default",
+				Annotations: map[string]string{
+					"valiant.io/source":              "helm",
+					"argocd.argoproj.io/tracking-id": "my-app:apps/Deployment:default/priority-app",
+				},
+				Labels: map[string]string{
+					"app.kubernetes.io/instance": "my-argo-app",
+				},
+				Generation: 1,
+				UID:        "test-uid-4",
+			},
+			Status: appsv1.DeploymentStatus{
+				Conditions: []appsv1.DeploymentCondition{
+					{Type: "Available", Status: "True", LastUpdateTime: metav1.Now()},
+					{Type: "Progressing", Reason: "NewReplicaSetAvailable"},
+				},
+			},
+		}
+
+		cfgWithHelm := config.Config{}
+		cfgWithHelm.Kubernetes.AllowedSources = []string{"argocd", "helm"}
+
+		client := fake.NewSimpleClientset(dep)
+		coll, err := collector.NewKubernetesCollector(cfgWithHelm, client)
+		if err != nil {
+			t.Fatal(err)
+		}
+		eventChan := make(chan domain.ChangeEvent, 10)
+		ctx := context.Background()
+
+		coll.CollectAndSend(ctx, eventChan)
+
+		select {
+		case event := <-eventChan:
+			if event.TriggerType != "helm" {
+				t.Errorf("expected TriggerType 'helm' (explicit annotation priority), got %q", event.TriggerType)
+			}
+			if event.Metadata["intent_source"] != "helm" {
+				t.Errorf("expected intent_source 'helm', got %q", event.Metadata["intent_source"])
+			}
+		case <-time.After(500 * time.Millisecond):
+			t.Fatal("timeout waiting for event")
+		}
+	})
+
+	t.Run("fallback to kubernetes-api when no indicators", func(t *testing.T) {
+		dep := &appsv1.Deployment{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:       "plain-app",
+				Namespace:  "default",
+				Generation: 1,
+				UID:        "test-uid-5",
+			},
+			Status: appsv1.DeploymentStatus{
+				Conditions: []appsv1.DeploymentCondition{
+					{Type: "Available", Status: "True", LastUpdateTime: metav1.Now()},
+					{Type: "Progressing", Reason: "NewReplicaSetAvailable"},
+				},
+			},
+		}
+
+		client := fake.NewSimpleClientset(dep)
+		coll, err := collector.NewKubernetesCollector(cfg, client)
+		if err != nil {
+			t.Fatal(err)
+		}
+		eventChan := make(chan domain.ChangeEvent, 10)
+		ctx := context.Background()
+
+		coll.CollectAndSend(ctx, eventChan)
+
+		select {
+		case event := <-eventChan:
+			if event.TriggerType != "kubernetes-api" {
+				t.Errorf("expected TriggerType 'kubernetes-api', got %q", event.TriggerType)
+			}
+			if event.Metadata["argocd_app_name"] != "" {
+				t.Errorf("expected empty argocd_app_name, got %q", event.Metadata["argocd_app_name"])
+			}
+		case <-time.After(500 * time.Millisecond):
+			t.Fatal("timeout waiting for event")
+		}
+	})
+}
+
 func TestKubernetesCollector_ConfigMapAnnotationFilter(t *testing.T) {
 	cfg := config.Config{}
 	cfg.Kubernetes.WatchConfigMaps = true
@@ -762,5 +983,146 @@ done:
 	}
 	if events[0].Summary != "ConfigMap default/cm-annotated data changed" {
 		t.Errorf("unexpected event summary: %s", events[0].Summary)
+	}
+}
+
+func TestSelectAppContainer(t *testing.T) {
+	t.Run("single container", func(t *testing.T) {
+		containers := []corev1.Container{
+			{Name: "app", Image: "registry/app:v1"},
+		}
+		image, name := collector.SelectAppContainer(containers, nil)
+		if image != "registry/app:v1" || name != "app" {
+			t.Errorf("expected registry/app:v1 / app, got %s / %s", image, name)
+		}
+	})
+
+	t.Run("skip istio-proxy sidecar", func(t *testing.T) {
+		containers := []corev1.Container{
+			{Name: "istio-proxy", Image: "istio/proxyv2:1.20"},
+			{Name: "api", Image: "registry/api:v2"},
+		}
+		image, name := collector.SelectAppContainer(containers, nil)
+		if image != "registry/api:v2" || name != "api" {
+			t.Errorf("expected registry/api:v2 / api, got %s / %s", image, name)
+		}
+	})
+
+	t.Run("skip multiple sidecars", func(t *testing.T) {
+		containers := []corev1.Container{
+			{Name: "istio-proxy", Image: "istio/proxyv2:1.20"},
+			{Name: "vault-agent", Image: "vault:1.15"},
+			{Name: "worker", Image: "registry/worker:v3"},
+		}
+		image, name := collector.SelectAppContainer(containers, nil)
+		if image != "registry/worker:v3" || name != "worker" {
+			t.Errorf("expected registry/worker:v3 / worker, got %s / %s", image, name)
+		}
+	})
+
+	t.Run("annotation override", func(t *testing.T) {
+		containers := []corev1.Container{
+			{Name: "sidecar", Image: "sidecar:v1"},
+			{Name: "main-app", Image: "registry/main:v4"},
+		}
+		annotations := map[string]string{"valiant.io/container": "main-app"}
+		image, name := collector.SelectAppContainer(containers, annotations)
+		if image != "registry/main:v4" || name != "main-app" {
+			t.Errorf("expected registry/main:v4 / main-app, got %s / %s", image, name)
+		}
+	})
+
+	t.Run("annotation for missing container falls back to non-sidecar", func(t *testing.T) {
+		containers := []corev1.Container{
+			{Name: "istio-proxy", Image: "istio/proxyv2:1.20"},
+			{Name: "api", Image: "registry/api:v5"},
+		}
+		annotations := map[string]string{"valiant.io/container": "nonexistent"}
+		image, name := collector.SelectAppContainer(containers, annotations)
+		if image != "registry/api:v5" || name != "api" {
+			t.Errorf("expected registry/api:v5 / api, got %s / %s", image, name)
+		}
+	})
+
+	t.Run("all sidecars falls back to first", func(t *testing.T) {
+		containers := []corev1.Container{
+			{Name: "istio-proxy", Image: "istio/proxyv2:1.20"},
+			{Name: "envoy", Image: "envoy:1.28"},
+		}
+		image, name := collector.SelectAppContainer(containers, nil)
+		if image != "istio/proxyv2:1.20" || name != "istio-proxy" {
+			t.Errorf("expected istio/proxyv2:1.20 / istio-proxy, got %s / %s", image, name)
+		}
+	})
+
+	t.Run("empty containers", func(t *testing.T) {
+		image, name := collector.SelectAppContainer(nil, nil)
+		if image != "" || name != "" {
+			t.Errorf("expected empty, got %s / %s", image, name)
+		}
+	})
+}
+
+func TestKubernetesCollector_DeploymentMetadataKeys(t *testing.T) {
+	cfg := config.Config{}
+
+	dep := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:       "meta-app",
+			Namespace:  "payment-ns",
+			Generation: 1,
+			UID:        "test-uid-meta",
+		},
+		Spec: appsv1.DeploymentSpec{
+			Template: corev1.PodTemplateSpec{
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
+						{Name: "app", Image: "registry/payment-service:abc123"},
+					},
+				},
+			},
+		},
+		Status: appsv1.DeploymentStatus{
+			Conditions: []appsv1.DeploymentCondition{
+				{Type: "Available", Status: "True", LastUpdateTime: metav1.Now()},
+				{Type: "Progressing", Reason: "NewReplicaSetAvailable"},
+			},
+		},
+	}
+
+	client := fake.NewSimpleClientset(dep)
+	coll, err := collector.NewKubernetesCollector(cfg, client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	eventChan := make(chan domain.ChangeEvent, 10)
+	ctx := context.Background()
+
+	coll.CollectAndSend(ctx, eventChan)
+
+	select {
+	case event := <-eventChan:
+		// Verify "env" metadata matches namespace
+		if event.Metadata["env"] != "payment-ns" {
+			t.Errorf("expected metadata env='payment-ns', got %q", event.Metadata["env"])
+		}
+		// Verify "namespace" is still present (backward compat)
+		if event.Metadata["namespace"] != "payment-ns" {
+			t.Errorf("expected metadata namespace='payment-ns', got %q", event.Metadata["namespace"])
+		}
+		// Verify "image_tag" matches container image
+		if event.Metadata["image_tag"] != "registry/payment-service:abc123" {
+			t.Errorf("expected metadata image_tag='registry/payment-service:abc123', got %q", event.Metadata["image_tag"])
+		}
+		// Verify "image" is also present
+		if event.Metadata["image"] != "registry/payment-service:abc123" {
+			t.Errorf("expected metadata image='registry/payment-service:abc123', got %q", event.Metadata["image"])
+		}
+		// Verify Source field
+		if event.Source != "kubernetes" {
+			t.Errorf("expected Source='kubernetes', got %q", event.Source)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("timeout waiting for event")
 	}
 }

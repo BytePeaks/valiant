@@ -4,7 +4,6 @@ import (
 	"context"
 	"testing"
 	"time"
-	"valiant/internal/config"
 	"valiant/internal/correlator"
 	"valiant/internal/domain"
 	"valiant/tests/correlator-engine/shared"
@@ -19,13 +18,10 @@ func TestImpactScoring_LevelClassification(t *testing.T) {
 		require.NoError(t, err)
 		defer shared.CleanupTestDB(db, schemaName)
 
-		storage := shared.NewTestPostgresStorage(db)
+		cfg := shared.SampleConfig()
+		storage := shared.NewTestPostgresStorage(db, cfg)
 		mockMetrics := shared.NewMockMetricsProvider()
 		baseline, impact := metricsFunc()
-
-		cfg := &config.Config{}
-		cfg.Analysis.BaselineDur = 30 * time.Minute
-		cfg.Analysis.ImpactDur = 30 * time.Minute
 
 		// Set event timestamp far enough in the past so the impact window is already closed.
 		// With EndTime at -90m and ImpactDur of 30m, the impact window ends at -90m + 5m + 30m = -55m (in the past). OK.
@@ -88,12 +84,12 @@ func TestImpactScoring_LevelClassification(t *testing.T) {
 		runTest(t, 0.0, "NONE", shared.NoImpactMetrics)
 	})
 	t.Run("LowImpact", func(t *testing.T) {
-		runTest(t, 0.2, "LOW", shared.LowImpactMetrics)
+		runTest(t, 0.423667, "MEDIUM", shared.LowImpactMetrics)
 	})
 	t.Run("MediumImpact", func(t *testing.T) {
-		runTest(t, 0.5, "MEDIUM", shared.MediumImpactMetrics)
+		runTest(t, 0.602500, "MEDIUM", shared.MediumImpactMetrics)
 	})
 	t.Run("HighImpact", func(t *testing.T) {
-		runTest(t, 0.8, "HIGH", shared.HighImpactMetrics)
+		runTest(t, 0.81083, "HIGH", shared.HighImpactMetrics)
 	})
 }

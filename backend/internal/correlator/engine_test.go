@@ -16,7 +16,9 @@ type MockStorage struct {
 	changeEvents []domain.ChangeEvent
 }
 
-func (m *MockStorage) SaveChangeEvent(ctx context.Context, event domain.ChangeEvent) error { return nil }
+func (m *MockStorage) SaveChangeEvent(ctx context.Context, event domain.ChangeEvent) error {
+	return nil
+}
 func (m *MockStorage) GetChangeEvents(ctx context.Context, filters map[string]interface{}) ([]domain.ChangeEvent, int, error) {
 	if m.changeEvents != nil {
 		return m.changeEvents, len(m.changeEvents), nil
@@ -29,7 +31,9 @@ func (m *MockStorage) DeleteChangeEventsOlderThan(ctx context.Context, cutoff ti
 func (m *MockStorage) GetChangeEventByID(ctx context.Context, id string) (domain.ChangeEvent, error) {
 	return domain.ChangeEvent{}, nil
 }
-func (m *MockStorage) GetServices(ctx context.Context) ([]string, error) { return nil, nil }
+func (m *MockStorage) GetServices(ctx context.Context, namespace string, linkedOnly bool) ([]string, error) {
+	return nil, nil
+}
 func (m *MockStorage) GetEventsPendingAnalysis(ctx context.Context) ([]domain.ChangeEvent, error) {
 	return nil, nil
 }
@@ -58,6 +62,17 @@ func (m *MockStorage) GetAnalyzedEventIDs(ctx context.Context, eventIDs []string
 
 func (m *MockStorage) GetNamespaces(ctx context.Context) ([]string, error) {
 	return []string{}, nil
+}
+
+func (m *MockStorage) SaveEventLink(ctx context.Context, link domain.EventLink) error { return nil }
+func (m *MockStorage) GetEventLinksByEventID(ctx context.Context, eventID string) ([]domain.EventLink, error) {
+	return nil, nil
+}
+func (m *MockStorage) GetEventLinksByExecutionID(ctx context.Context, executionEventID string) ([]domain.EventLink, error) {
+	return nil, nil
+}
+func (m *MockStorage) GetRecentConfigChangeEvents(ctx context.Context, service string, before time.Time, within time.Duration) ([]domain.ChangeEvent, error) {
+	return nil, nil
 }
 
 // MockMetrics implements metrics.MetricsProvider
@@ -126,14 +141,14 @@ func TestAnalyzeImpact_CalculatesAndSaves(t *testing.T) {
 	cfg.Analysis.WeightsCustom = map[string]float64{}
 
 	store := &MockStorage{}
-	
+
 	// Setup metrics: Baseline (good), Impact (bad errors AND latency)
 	metrics := &ControllableMetrics{
 		Calls: []domain.MetricValues{
 			// Baseline (Non-zero errors to allow >100% delta)
-			{ErrorRate: 0.01, LatencyP95: 100, RPS: 100}, 
-			// Impact: 
-			{ErrorRate: 0.05, LatencyP95: 300, RPS: 100}, 
+			{ErrorRate: 0.01, LatencyP95: 100, RPS: 100},
+			// Impact:
+			{ErrorRate: 0.05, LatencyP95: 300, RPS: 100},
 		},
 	}
 
@@ -164,11 +179,11 @@ func TestAnalyzeImpact_CalculatesAndSaves(t *testing.T) {
 func TestAnalyzeImpact_LowConfidence(t *testing.T) {
 	cfg := &config.Config{}
 	store := &MockStorage{}
-	
+
 	// Low RPS scenario
 	metrics := &ControllableMetrics{
 		Calls: []domain.MetricValues{
-			{RPS: 0.5, ErrorRate: 0}, // Baseline
+			{RPS: 0.5, ErrorRate: 0},   // Baseline
 			{RPS: 0.8, ErrorRate: 0.5}, // Impact (High error rate but low volume)
 		},
 	}
@@ -266,10 +281,10 @@ func TestAnalyzeImpact_ZeroBaseline(t *testing.T) {
 func TestAnalyzeImpact_PrometheusError(t *testing.T) {
 	cfg := &config.Config{}
 	store := &MockStorage{}
-	
+
 	// Mock metrics returns error
 	metrics := &ErrorMetrics{err: errors.New("prometheus connection refused")}
-	
+
 	engine := correlator.NewEngine(store, metrics, cfg)
 	event := domain.ChangeEvent{ID: "evt-err", Timestamp: time.Now().Add(-1 * time.Hour)}
 
@@ -282,6 +297,7 @@ func TestAnalyzeImpact_PrometheusError(t *testing.T) {
 type ErrorMetrics struct {
 	err error
 }
+
 func (m *ErrorMetrics) GetAverageMetrics(ctx context.Context, s []string, start, end time.Time) (domain.MetricValues, error) {
 	return domain.MetricValues{}, m.err
 }
@@ -293,11 +309,11 @@ func TestAnalyzeImpact_NoServices(t *testing.T) {
 	cfg := &config.Config{}
 	store := &MockStorage{}
 	metrics := &MockMetrics{baseline: domain.MetricValues{RPS: 10}}
-	
+
 	engine := correlator.NewEngine(store, metrics, cfg)
 	// Event with empty affected_services
 	event := domain.ChangeEvent{
-		ID:               "evt-no-svc", 
+		ID:               "evt-no-svc",
 		Timestamp:        time.Now().Add(-1 * time.Hour),
 		AffectedServices: []string{},
 	}
@@ -318,9 +334,9 @@ func TestAnalyzeImpact_InstantRollout(t *testing.T) {
 	metrics := &ControllableMetrics{
 		Calls: []domain.MetricValues{{RPS: 10}, {RPS: 10}},
 	}
-	
+
 	engine := correlator.NewEngine(store, metrics, cfg)
-	
+
 	// Start and End times are identical
 	now := time.Now().Add(-1 * time.Hour)
 	event := domain.ChangeEvent{
@@ -344,12 +360,13 @@ func TestAnalyzeImpact_IntentExecutionLinking(t *testing.T) {
 	t.Run("Linked GitOps event", func(t *testing.T) {
 		store := &MockStorage{
 			changeEvents: []domain.ChangeEvent{
-				{ID: "ci-evt-1", TriggerType: "CI", Metadata: map[string]string{"git_commit_sha": "abcdef123"}},
+				{ID: "ci-evt-1", IsIntent: true, TriggerType: "CI", Metadata: map[string]string{"git_commit_sha": "abcdef123"}},
 			},
 		}
 		engine := correlator.NewEngine(store, metrics, cfg)
 		event := domain.ChangeEvent{
 			ID:          "exec-evt-1",
+			IsExecution: true,
 			TriggerType: "GitOps",
 			Timestamp:   eventTime,
 			Metadata:    map[string]string{"git_commit_sha": "abcdef123"},
@@ -368,6 +385,7 @@ func TestAnalyzeImpact_IntentExecutionLinking(t *testing.T) {
 		engine := correlator.NewEngine(store, metrics, cfg)
 		event := domain.ChangeEvent{
 			ID:          "exec-evt-2",
+			IsExecution: true,
 			TriggerType: "GitOps",
 			Timestamp:   eventTime,
 			Metadata:    map[string]string{"git_commit_sha": "abcdef123"},
@@ -386,6 +404,7 @@ func TestAnalyzeImpact_IntentExecutionLinking(t *testing.T) {
 		engine := correlator.NewEngine(store, metrics, cfg)
 		event := domain.ChangeEvent{
 			ID:          "exec-evt-3",
+			IsExecution: true,
 			TriggerType: "GitOps",
 			Timestamp:   eventTime,
 			Metadata:    map[string]string{},
@@ -404,6 +423,7 @@ func TestAnalyzeImpact_IntentExecutionLinking(t *testing.T) {
 		engine := correlator.NewEngine(store, metrics, cfg)
 		event := domain.ChangeEvent{
 			ID:          "manual-evt-1",
+			IsExecution: true,
 			TriggerType: "manual",
 			Timestamp:   eventTime,
 		}
@@ -421,6 +441,7 @@ func TestAnalyzeImpact_IntentExecutionLinking(t *testing.T) {
 		engine := correlator.NewEngine(store, metrics, cfg)
 		event := domain.ChangeEvent{
 			ID:          "ci-evt-only",
+			IsIntent:    true,
 			TriggerType: "CI",
 			Timestamp:   eventTime,
 		}

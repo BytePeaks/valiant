@@ -56,8 +56,8 @@ func SampleDeployment(name, namespace, image, sha string) *appsv1.Deployment {
 			Namespace: namespace,
 			UID:       types.UID(name + "-uid"),
 			Annotations: map[string]string{
-				"valiant.io/source": "cicd",
-				"git_commit_sha":    sha,
+				"valiant.io/source":  "cicd",
+				"valiant.io/git-sha": sha,
 			},
 			Generation: 1,
 		},
@@ -123,6 +123,64 @@ func int32Ptr(i int32) *int32 {
 // NewFakeKubeClient creates a fake Kubernetes clientset with initial objects.
 func NewFakeKubeClient(objects ...runtime.Object) *fake.Clientset {
 	return fake.NewSimpleClientset(objects...)
+}
+
+// SampleStatefulSet creates a test Kubernetes StatefulSet object with minimal status
+func SampleStatefulSet(name, namespace, image, sha string) *appsv1.StatefulSet {
+	return &appsv1.StatefulSet{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+			UID:       types.UID(name + "-ss-uid"),
+			Annotations: map[string]string{
+				"valiant.io/source": "cicd",
+				"valiant.io/git-sha": sha,
+			},
+			Generation: 1,
+		},
+		Spec: appsv1.StatefulSetSpec{
+			Replicas: int32Ptr(1),
+			Selector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{"app": name},
+			},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: map[string]string{"app": name},
+				},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
+						{
+							Name:  "app",
+							Image: image,
+						},
+					},
+				},
+			},
+		},
+		Status: appsv1.StatefulSetStatus{
+			ObservedGeneration: 1,
+		},
+	}
+}
+
+// SetStatefulSetReady sets the status of a statefulset to ready (complete rollout).
+func SetStatefulSetReady(ss *appsv1.StatefulSet) *appsv1.StatefulSet {
+	ss.Status.ReadyReplicas = *ss.Spec.Replicas
+	ss.Status.UpdatedReplicas = *ss.Spec.Replicas
+	ss.Status.Replicas = *ss.Spec.Replicas
+	ss.Status.ObservedGeneration = ss.Generation
+	ss.Status.CurrentRevision = "rev-1"
+	ss.Status.UpdateRevision = "rev-1" // Must match CurrentRevision for completion
+	return ss
+}
+
+// SetStatefulSetNotReady sets the status of a statefulset to not ready
+func SetStatefulSetNotReady(ss *appsv1.StatefulSet) *appsv1.StatefulSet {
+	ss.Status.ReadyReplicas = 0
+	ss.Status.UpdatedReplicas = 0
+	ss.Status.CurrentRevision = "rev-0"
+	ss.Status.UpdateRevision = "rev-1" // Mismatch = not complete
+	return ss
 }
 
 // SampleConfigMap creates a test Kubernetes ConfigMap object

@@ -48,7 +48,7 @@ Next.js 16 app directory structure with React 19, TypeScript (strict mode), and 
 Responsibilities:
 - Dashboard with timeline visualization of change events
 - Service analytics with impact scores and metric breakdowns
-- Filter/search events by service, namespace, change type, date range
+- Filter/search events by service, namespace, date range
 - Trigger manual analysis and view results
 - Toggle metric display preferences per service
 
@@ -56,11 +56,12 @@ Communicates with the backend via `NEXT_PUBLIC_API_URL` (default `http://localho
 
 ### PostgreSQL
 
-PostgreSQL 16 serves as the single datastore. Migrations (`backend/migrations/`, files 000-005) are applied automatically at startup.
+PostgreSQL 16 serves as the single datastore. Migrations (`backend/migrations/`, files 000-008) are applied automatically at startup.
 
 Stores:
-- **Change events** - Normalized `ChangeEvent` records from all collectors
+- **Change events** - Normalized `ChangeEvent` records from all collectors (includes blast radius as JSONB)
 - **Impact analysis snapshots** - Immutable analysis results
+- **Event links** - Relationships between events (intent-execution links, config trigger links)
 - **Service preferences** - Per-service metric display settings
 
 ### Prometheus
@@ -104,7 +105,8 @@ backend/
 
 4. **Correlation** - The correlator engine:
    - Checks for an existing snapshot (returns cached if found)
-   - Checks for intent-execution linking (orphan detection)
+   - Checks for intent-execution linking via 3-tier confidence ladder: `sha_match` (1.0), `image_tag_match` (0.9), `image_sha_inferred` (0.85). Unmatched executions are flagged as orphaned.
+   - For rollout events: searches for recent ConfigMap/Secret changes that affected the same service (config trigger linking)
    - Fetches baseline and impact metrics from Prometheus
    - Calculates deltas, impact score, confidence score
    - Classifies impact level (NONE/LOW/MEDIUM/HIGH)

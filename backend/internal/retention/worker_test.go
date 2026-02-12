@@ -27,7 +27,7 @@ func (m *mockStorage) GetChangeEvents(ctx context.Context, filters map[string]in
 func (m *mockStorage) GetChangeEventByID(ctx context.Context, id string) (domain.ChangeEvent, error) {
 	return domain.ChangeEvent{}, nil
 }
-func (m *mockStorage) GetServices(ctx context.Context) ([]string, error) {
+func (m *mockStorage) GetServices(ctx context.Context, namespace string, linkedOnly bool) ([]string, error) {
 	return nil, nil
 }
 func (m *mockStorage) GetNamespaces(ctx context.Context) ([]string, error) {
@@ -51,6 +51,17 @@ func (m *mockStorage) SaveServicePreferences(ctx context.Context, serviceName st
 
 func (m *mockStorage) GetAnalyzedEventIDs(ctx context.Context, eventIDs []string) (map[string]bool, error) {
 	return map[string]bool{}, nil
+}
+
+func (m *mockStorage) SaveEventLink(ctx context.Context, link domain.EventLink) error { return nil }
+func (m *mockStorage) GetEventLinksByEventID(ctx context.Context, eventID string) ([]domain.EventLink, error) {
+	return nil, nil
+}
+func (m *mockStorage) GetEventLinksByExecutionID(ctx context.Context, executionEventID string) ([]domain.EventLink, error) {
+	return nil, nil
+}
+func (m *mockStorage) GetRecentConfigChangeEvents(ctx context.Context, service string, before time.Time, within time.Duration) ([]domain.ChangeEvent, error) {
+	return nil, nil
 }
 
 func (m *mockStorage) DeleteChangeEventsOlderThan(ctx context.Context, cutoff time.Time) (int64, error) {
@@ -103,7 +114,7 @@ func TestWorker_StorageError(t *testing.T) {
 	interval := 10 * time.Millisecond
 
 	mockStore := &mockStorage{
-		deleteError:   errors.New("db error"),
+		deleteError: errors.New("db error"),
 	}
 
 	worker := NewWorker(mockStore, ttl)

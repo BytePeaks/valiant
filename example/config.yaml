@@ -101,6 +101,10 @@ analysis:
   # If no intent event is found within this window, the execution event is marked as orphaned.
   intent_execution_correlation_window: "1h"
 
+  # Max time between a ConfigMap/Secret change and a subsequent rollout
+  # for Valiant to consider the config change as a causal trigger.
+  config_trigger_window: "15m"
+
   # Metric Weights
   # --------------
   # Define the relative importance of each metric in the impact score calculation.
@@ -122,3 +126,36 @@ analysis:
   weights_custom:
     orders_per_minute: 0.1
     payment_failure_rate: 0.2
+
+# Linking Configuration
+# ---------------------
+# Define templates to generate clickable deep links from event metadata.
+# These links will appear in the UI for relevant ChangeEvents.
+#
+# Each template specifies:
+# - name: Display name for the link in the UI.
+# - metadata_has: A list of metadata keys that MUST be present in a ChangeEvent's
+#                 metadata for this link template to be considered. This prevents
+#                 broken or irrelevant links.
+# - url_template: A Go template string to construct the URL. Variables correspond
+#                 to keys in the ChangeEvent's metadata (e.g., {{ .git_commit_sha }}).
+#                 If a required metadata key is missing, the link will not be generated.
+linking:
+  - name: "View Commit on GitHub"
+    metadata_has: ["repository_url", "git_commit_sha"]
+    url_template: "{{ .repository_url }}/commit/{{ .git_commit_sha }}"
+
+  - name: "View Build on Jenkins"
+    metadata_has: ["jenkins_url", "jenkins_job_name", "jenkins_build_id"]
+    url_template: "{{ .jenkins_url }}/job/{{ .jenkins_job_name }}/{{ .jenkins_build_id }}"
+
+  - name: "Open ArgoCD Application"
+    metadata_has: ["argocd_url", "argocd_app_name"]
+    url_template: "{{ .argocd_url }}/applications/{{ .argocd_app_name }}"
+
+# Worker Configuration
+# --------------------
+worker:
+  # How often the analysis worker checks for new events to process.
+  # Supports standard Go durations (e.g., "1m", "30s", "1h").
+  polling_interval: "5m"

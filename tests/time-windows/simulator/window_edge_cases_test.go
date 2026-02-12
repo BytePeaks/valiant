@@ -4,9 +4,9 @@ import (
 	"context"
 	"testing"
 	"time"
-	"valiant/internal/config"
 	"valiant/internal/correlator"
 	"valiant/internal/storage"
+	"valiant/tests/common"
 	"valiant/tests/time-windows/shared"
 
 	"github.com/stretchr/testify/assert"
@@ -18,12 +18,9 @@ func TestLongRollout_EndTimeFarFromTimestamp(t *testing.T) {
 	require.NoError(t, err)
 	defer shared.CleanupTestDB(db, schemaName)
 
-	store := storage.NewPostgresStorage(db)
+	cfg := common.SampleConfig()
+	store := storage.NewPostgresStorage(db, cfg)
 	mockMetrics := &shared.MockMetricsProvider{}
-
-	cfg := &config.Config{}
-	cfg.Analysis.BaselineDur = 30 * time.Minute
-	cfg.Analysis.ImpactDur = 30 * time.Minute
 
 	// Rollout that took 2 hours
 	eventTimestamp := time.Now().Add(-6 * time.Hour)
@@ -70,11 +67,8 @@ func TestOverlappingWindows_ConcurrentEvents(t *testing.T) {
 	require.NoError(t, err)
 	defer shared.CleanupTestDB(db, schemaName)
 
-	store := storage.NewPostgresStorage(db)
-
-	cfg := &config.Config{}
-	cfg.Analysis.BaselineDur = 30 * time.Minute
-	cfg.Analysis.ImpactDur = 30 * time.Minute
+	cfg := common.SampleConfig()
+	store := storage.NewPostgresStorage(db, cfg)
 
 	baseTime := time.Now().Add(-5 * time.Hour)
 
@@ -132,12 +126,9 @@ func TestSubMinutePrecision_WindowBoundaries(t *testing.T) {
 	require.NoError(t, err)
 	defer shared.CleanupTestDB(db, schemaName)
 
-	store := storage.NewPostgresStorage(db)
+	cfg := common.SampleConfig()
+	store := storage.NewPostgresStorage(db, cfg)
 	mockMetrics := &shared.MockMetricsProvider{}
-
-	cfg := &config.Config{}
-	cfg.Analysis.BaselineDur = 30 * time.Minute
-	cfg.Analysis.ImpactDur = 30 * time.Minute
 
 	// Event with sub-second precision in timestamps
 	eventTimestamp := time.Now().Add(-5 * time.Hour).Add(123 * time.Millisecond)

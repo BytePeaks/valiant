@@ -15,9 +15,13 @@ type LinkingMockStorage struct {
 	availableChangeEvents []domain.ChangeEvent
 	// Filters that were applied in the last call to GetChangeEvents
 	filtersApplied map[string]interface{}
+	// Track saved links
+	savedLinks []domain.EventLink
 }
 
-func (m *LinkingMockStorage) SaveChangeEvent(ctx context.Context, event domain.ChangeEvent) error { return nil }
+func (m *LinkingMockStorage) SaveChangeEvent(ctx context.Context, event domain.ChangeEvent) error {
+	return nil
+}
 func (m *LinkingMockStorage) GetChangeEvents(ctx context.Context, filters map[string]interface{}) ([]domain.ChangeEvent, int, error) {
 	m.filtersApplied = filters
 	var results []domain.ChangeEvent
@@ -61,11 +65,15 @@ func (m *LinkingMockStorage) DeleteChangeEventsOlderThan(ctx context.Context, cu
 func (m *LinkingMockStorage) GetChangeEventByID(ctx context.Context, id string) (domain.ChangeEvent, error) {
 	return domain.ChangeEvent{}, nil
 }
-func (m *LinkingMockStorage) GetServices(ctx context.Context) ([]string, error) { return nil, nil }
+func (m *LinkingMockStorage) GetServices(ctx context.Context, namespace string, linkedOnly bool) ([]string, error) {
+	return nil, nil
+}
 func (m *LinkingMockStorage) GetEventsPendingAnalysis(ctx context.Context) ([]domain.ChangeEvent, error) {
 	return nil, nil
 }
-func (m *LinkingMockStorage) SaveImpactAnalysis(ctx context.Context, analysis domain.ImpactAnalysis) error { return nil }
+func (m *LinkingMockStorage) SaveImpactAnalysis(ctx context.Context, analysis domain.ImpactAnalysis) error {
+	return nil
+}
 func (m *LinkingMockStorage) GetImpactAnalysisByEventID(ctx context.Context, eventID string) (*domain.ImpactAnalysis, error) {
 	return nil, nil
 }
@@ -84,6 +92,32 @@ func (m *LinkingMockStorage) GetNamespaces(ctx context.Context) ([]string, error
 	return []string{}, nil
 }
 
+func (m *LinkingMockStorage) SaveEventLink(ctx context.Context, link domain.EventLink) error {
+	m.savedLinks = append(m.savedLinks, link)
+	return nil
+}
+func (m *LinkingMockStorage) GetEventLinksByEventID(ctx context.Context, eventID string) ([]domain.EventLink, error) {
+	var result []domain.EventLink
+	for _, link := range m.savedLinks {
+		if link.IntentEventID == eventID || link.ExecutionEventID == eventID {
+			result = append(result, link)
+		}
+	}
+	return result, nil
+}
+func (m *LinkingMockStorage) GetEventLinksByExecutionID(ctx context.Context, executionEventID string) ([]domain.EventLink, error) {
+	var result []domain.EventLink
+	for _, link := range m.savedLinks {
+		if link.ExecutionEventID == executionEventID {
+			result = append(result, link)
+		}
+	}
+	return result, nil
+}
+func (m *LinkingMockStorage) GetRecentConfigChangeEvents(ctx context.Context, service string, before time.Time, within time.Duration) ([]domain.ChangeEvent, error) {
+	return nil, nil
+}
+
 func TestIntentExecutionLinking(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Analysis.IntentExecutionCorrelationDur = 1 * time.Hour
@@ -92,6 +126,7 @@ func TestIntentExecutionLinking(t *testing.T) {
 
 	baseExecutionEvent := domain.ChangeEvent{
 		ID:          "exec-evt-1",
+		IsExecution: true,
 		TriggerType: "GitOps",
 		Timestamp:   eventTime,
 		Metadata:    map[string]string{"git_commit_sha": "abcdef123"},
@@ -112,13 +147,13 @@ func TestIntentExecutionLinking(t *testing.T) {
 		if analysis.IsOrphaned {
 			t.Error("Expected IsOrphaned to be false, but it was true")
 		}
-		
+
 		metadataFilter := store.filtersApplied["metadata_has_any"].(map[string]string)
 		if metadataFilter["git_commit_sha"] != "abcdef123" {
 			t.Errorf("Incorrect git_commit_sha in metadata filter")
 		}
 	})
-	
+
 	t.Run("Successful Link via image_tag", func(t *testing.T) {
 		store := &LinkingMockStorage{
 			availableChangeEvents: []domain.ChangeEvent{
@@ -128,6 +163,7 @@ func TestIntentExecutionLinking(t *testing.T) {
 		engine := correlator.NewEngine(store, metrics, cfg)
 		event := domain.ChangeEvent{
 			ID:          "exec-evt-2",
+			IsExecution: true,
 			TriggerType: "GitOps",
 			Timestamp:   eventTime,
 			Metadata:    map[string]string{"image_tag": "v1.2.3"},
@@ -141,7 +177,7 @@ func TestIntentExecutionLinking(t *testing.T) {
 			t.Error("Expected IsOrphaned to be false, but it was true")
 		}
 	})
-	
+
 	t.Run("Successful Link with both sha and tag", func(t *testing.T) {
 		store := &LinkingMockStorage{
 			availableChangeEvents: []domain.ChangeEvent{
@@ -154,6 +190,7 @@ func TestIntentExecutionLinking(t *testing.T) {
 		engine := correlator.NewEngine(store, metrics, cfg)
 		event := domain.ChangeEvent{
 			ID:          "exec-evt-3",
+			IsExecution: true,
 			TriggerType: "GitOps",
 			Timestamp:   eventTime,
 			Metadata:    map[string]string{"git_commit_sha": "abcdef123", "image_tag": "v1.2.3"},
@@ -183,7 +220,7 @@ func TestIntentExecutionLinking(t *testing.T) {
 			t.Error("Expected IsOrphaned to be true, but it was false")
 		}
 	})
-	
+
 	t.Run("Successful link at the very edge of the time window", func(t *testing.T) {
 		store := &LinkingMockStorage{
 			availableChangeEvents: []domain.ChangeEvent{
@@ -201,7 +238,7 @@ func TestIntentExecutionLinking(t *testing.T) {
 			t.Error("Expected IsOrphaned to be false when CI event is at the window edge, but it was true")
 		}
 	})
-	
+
 	t.Run("Orphaned when CI event is just outside the time window", func(t *testing.T) {
 		store := &LinkingMockStorage{
 			availableChangeEvents: []domain.ChangeEvent{
@@ -225,6 +262,7 @@ func TestIntentExecutionLinking(t *testing.T) {
 		engine := correlator.NewEngine(store, metrics, cfg)
 		event := domain.ChangeEvent{
 			ID:          "exec-evt-nometa",
+			IsExecution: true,
 			TriggerType: "GitOps",
 			Timestamp:   eventTime,
 			Metadata:    map[string]string{}, // No SHA or tag
@@ -238,7 +276,7 @@ func TestIntentExecutionLinking(t *testing.T) {
 			t.Error("Expected IsOrphaned to be true for event with no linking metadata, but it was false")
 		}
 	})
-	
+
 	t.Run("Non-execution event is never orphaned", func(t *testing.T) {
 		store := &LinkingMockStorage{}
 		engine := correlator.NewEngine(store, metrics, cfg)
@@ -268,6 +306,7 @@ func TestIntentExecutionLinking(t *testing.T) {
 		// First execution event
 		execEvent1 := domain.ChangeEvent{
 			ID:          "exec-evt-multi-1",
+			IsExecution: true,
 			TriggerType: "GitOps",
 			Timestamp:   eventTime,
 			Metadata:    map[string]string{"image_tag": "v3.0.0"},
@@ -283,6 +322,7 @@ func TestIntentExecutionLinking(t *testing.T) {
 		// Second execution event, slightly later
 		execEvent2 := domain.ChangeEvent{
 			ID:          "exec-evt-multi-2",
+			IsExecution: true,
 			TriggerType: "GitOps",
 			Timestamp:   eventTime.Add(5 * time.Minute),
 			Metadata:    map[string]string{"image_tag": "v3.0.0"},
@@ -313,6 +353,64 @@ func TestIntentExecutionLinking(t *testing.T) {
 		}
 	})
 
+	t.Run("Closest-in-time tiebreaker when multiple intents match same image_tag", func(t *testing.T) {
+		store := &LinkingMockStorage{
+			availableChangeEvents: []domain.ChangeEvent{
+				{ID: "ci-far", IsIntent: true, TriggerType: "CI", Timestamp: eventTime.Add(-50 * time.Minute), Metadata: map[string]string{"image_tag": "registry/app:v2.0.0"}},
+				{ID: "ci-close", IsIntent: true, TriggerType: "CI", Timestamp: eventTime.Add(-5 * time.Minute), Metadata: map[string]string{"image_tag": "registry/app:v2.0.0"}},
+				{ID: "ci-medium", IsIntent: true, TriggerType: "CI", Timestamp: eventTime.Add(-20 * time.Minute), Metadata: map[string]string{"image_tag": "registry/app:v2.0.0"}},
+			},
+		}
+		engine := correlator.NewEngine(store, metrics, cfg)
+		event := domain.ChangeEvent{
+			ID:          "exec-tiebreak",
+			IsExecution: true,
+			TriggerType: "kubernetes-api",
+			Timestamp:   eventTime,
+			Metadata:    map[string]string{"image_tag": "registry/app:v2.0.0"},
+		}
+		links, err := engine.CreateIntentExecutionLinks(context.Background(), event)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		if len(links) != 1 {
+			t.Fatalf("Expected exactly 1 link (closest), got %d", len(links))
+		}
+		if links[0].IntentEventID != "ci-close" {
+			t.Errorf("Expected closest CI event 'ci-close', got %s", links[0].IntentEventID)
+		}
+	})
+
+	t.Run("Closest-in-time tiebreaker for SHA match tier", func(t *testing.T) {
+		store := &LinkingMockStorage{
+			availableChangeEvents: []domain.ChangeEvent{
+				{ID: "ci-sha-far", IsIntent: true, TriggerType: "CI", Timestamp: eventTime.Add(-55 * time.Minute), Metadata: map[string]string{"git_commit_sha": "rollback-sha"}},
+				{ID: "ci-sha-near", IsIntent: true, TriggerType: "CI", Timestamp: eventTime.Add(-3 * time.Minute), Metadata: map[string]string{"git_commit_sha": "rollback-sha"}},
+			},
+		}
+		engine := correlator.NewEngine(store, metrics, cfg)
+		event := domain.ChangeEvent{
+			ID:          "exec-sha-tiebreak",
+			IsExecution: true,
+			TriggerType: "kubernetes-api",
+			Timestamp:   eventTime,
+			Metadata:    map[string]string{"git_commit_sha": "rollback-sha"},
+		}
+		links, err := engine.CreateIntentExecutionLinks(context.Background(), event)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		if len(links) != 1 {
+			t.Fatalf("Expected exactly 1 link, got %d", len(links))
+		}
+		if links[0].IntentEventID != "ci-sha-near" {
+			t.Errorf("Expected closest CI event 'ci-sha-near', got %s", links[0].IntentEventID)
+		}
+		if links[0].LinkType != "sha_match" {
+			t.Errorf("Expected sha_match link type, got %s", links[0].LinkType)
+		}
+	})
+
 	t.Run("Linkable manual event is not orphaned", func(t *testing.T) {
 		store := &LinkingMockStorage{
 			availableChangeEvents: []domain.ChangeEvent{
@@ -322,6 +420,7 @@ func TestIntentExecutionLinking(t *testing.T) {
 		engine := correlator.NewEngine(store, metrics, cfg)
 		manualEvent := domain.ChangeEvent{
 			ID:          "manual-exec-1",
+			IsExecution: true,
 			TriggerType: "manual",
 			Timestamp:   eventTime,
 			Metadata:    map[string]string{"git_commit_sha": "manual-sha"},
@@ -334,5 +433,111 @@ func TestIntentExecutionLinking(t *testing.T) {
 			t.Error("Expected linkable manual event not to be orphaned, but it was")
 		}
 	})
-}
 
+	t.Run("Reason metadata populated on SHA match link", func(t *testing.T) {
+		store := &LinkingMockStorage{
+			availableChangeEvents: []domain.ChangeEvent{
+				{ID: "ci-reason-sha", IsIntent: true, TriggerType: "CI", Timestamp: eventTime.Add(-10 * time.Minute), Metadata: map[string]string{"git_commit_sha": "abcdef123"}},
+			},
+		}
+		engine := correlator.NewEngine(store, metrics, cfg)
+		event := domain.ChangeEvent{
+			ID:          "exec-reason-sha",
+			IsExecution: true,
+			TriggerType: "GitOps",
+			Timestamp:   eventTime,
+			Metadata:    map[string]string{"git_commit_sha": "abcdef123"},
+		}
+		_, err := engine.CreateIntentExecutionLinks(context.Background(), event)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		if len(store.savedLinks) == 0 {
+			t.Fatal("Expected at least one saved link")
+		}
+		reason := store.savedLinks[0].Metadata["reason"]
+		if reason == "" {
+			t.Error("Expected reason metadata to be populated on SHA match link")
+		}
+		if store.savedLinks[0].LinkType != "sha_match" {
+			t.Errorf("Expected sha_match link type, got %s", store.savedLinks[0].LinkType)
+		}
+	})
+
+	t.Run("Image SHA inferred link at 0.85 confidence", func(t *testing.T) {
+		store := &LinkingMockStorage{
+			availableChangeEvents: []domain.ChangeEvent{
+				// CI event with a SHA but no image_tag match
+				{ID: "ci-sha-infer", IsIntent: true, TriggerType: "CI", Timestamp: eventTime.Add(-10 * time.Minute), Metadata: map[string]string{"git_commit_sha": "abc123def456789"}},
+			},
+		}
+		engine := correlator.NewEngine(store, metrics, cfg)
+		// Execution event with image tag that contains the SHA
+		event := domain.ChangeEvent{
+			ID:          "exec-sha-infer",
+			IsExecution: true,
+			TriggerType: "kubernetes-api",
+			Timestamp:   eventTime,
+			Metadata:    map[string]string{"image_tag": "registry/app:abc123def456789"},
+		}
+		links, err := engine.CreateIntentExecutionLinks(context.Background(), event)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		if len(links) == 0 {
+			t.Fatal("Expected image_sha_inferred link to be created")
+		}
+		if links[0].LinkType != "image_sha_inferred" {
+			t.Errorf("Expected link type image_sha_inferred, got %s", links[0].LinkType)
+		}
+		if links[0].Confidence != 0.85 {
+			t.Errorf("Expected confidence 0.85, got %f", links[0].Confidence)
+		}
+		if links[0].Metadata["reason"] == "" {
+			t.Error("Expected reason metadata to be populated")
+		}
+	})
+
+	t.Run("Exact SHA match takes priority over image_sha_inferred", func(t *testing.T) {
+		store := &LinkingMockStorage{
+			availableChangeEvents: []domain.ChangeEvent{
+				{ID: "ci-priority", IsIntent: true, TriggerType: "CI", Timestamp: eventTime.Add(-10 * time.Minute), Metadata: map[string]string{
+					"git_commit_sha": "abc123def456",
+					"image_tag":      "registry/app:abc123def456",
+				}},
+			},
+		}
+		engine := correlator.NewEngine(store, metrics, cfg)
+		event := domain.ChangeEvent{
+			ID:          "exec-priority",
+			IsExecution: true,
+			TriggerType: "kubernetes-api",
+			Timestamp:   eventTime,
+			Metadata: map[string]string{
+				"git_commit_sha": "abc123def456",
+				"image_tag":      "registry/app:abc123def456",
+			},
+		}
+		links, err := engine.CreateIntentExecutionLinks(context.Background(), event)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		// Should get sha_match (1.0), not image_sha_inferred (0.85)
+		hasShaMatch := false
+		hasInferred := false
+		for _, link := range links {
+			if link.LinkType == "sha_match" {
+				hasShaMatch = true
+			}
+			if link.LinkType == "image_sha_inferred" {
+				hasInferred = true
+			}
+		}
+		if !hasShaMatch {
+			t.Error("Expected sha_match link when SHA matches exactly")
+		}
+		if hasInferred {
+			t.Error("Did not expect image_sha_inferred when exact SHA match exists")
+		}
+	})
+}

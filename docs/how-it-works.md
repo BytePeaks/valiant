@@ -15,7 +15,7 @@ This separation matters because a merged PR doesn't affect production until it's
 
 ```
 Intent (CI Build) ──────────────> Execution (K8s Rollout) ──────> Impact Analysis
-       metadata: git_sha=a1b2c3d ──links to──> metadata: git_sha=a1b2c3d
+       metadata: git_commit_sha=a1b2c3d ──links to──> metadata: git_commit_sha=a1b2c3d
 ```
 
 ---
@@ -109,12 +109,114 @@ A secondary score (0.0-1.0) indicates how statistically reliable the analysis is
 
 ## Intent-Execution Linking
 
-When Valiant encounters an **Execution** event (e.g., a K8s deployment), it looks backward within a configurable correlation window (default `1h`) for a matching **Intent** event (e.g., a CI build) using shared metadata:
+When Valiant encounters an **Execution** event (e.g., a K8s deployment), it looks backward within a configurable correlation window (default `1h`) for a matching **Intent** event (e.g., a CI build) using shared metadata. Linking is **eager** — it runs immediately when an event arrives, in both directions (execution looking for intent, and intent looking for execution).
 
-- `git_commit_sha` - The same Git SHA appears in both the CI build and the K8s rollout
-- `image_tag` - The same container image tag links the build to the deployment
+### Confidence Ladder
 
-If no matching intent event is found, the execution is marked as **orphaned** - meaning it happened without a corresponding CI signal. This helps identify unexpected or undocumented changes.
+Valiant tries three matching tiers in order, from most to least precise:
+
+| Tier | Link Type | Confidence | How It Matches |
+|:-----|:----------|:-----------|:---------------|
+| 1 | `sha_match` | **1.0** | Exact `git_commit_sha` match between intent and execution. Requires `valiant.io/git-sha` annotation on the K8s resource. |
+| 2 | `image_tag_match` | **0.9** | Exact `image_tag` match. **Zero-config**: the K8s collector auto-extracts the container image from the pod spec. |
+| 3 | `image_sha_inferred` | **0.85** | The image tag portion contains the intent's commit SHA prefix (min 7 chars). Catches CI pipelines that tag images with the commit SHA. |
+
+Every link includes a human-readable `reason` in its metadata for explainability (e.g., `"Exact image_tag match: registry/app:abc123"`).
+
+Higher tiers take priority — if a `sha_match` (1.0) exists, `image_tag_match` and `image_sha_inferred` are not created for the same pair.
+
+### Zero-Config Linking
+
+Tiers 2 and 3 require **no Kubernetes-side annotations**. The K8s collector automatically extracts `image_tag` from the container spec. If your CI pipeline sends `image_tag` or `git_commit_sha` in its POST payload, linking happens automatically:
+
+- CI tags image with a version (`app:v1.2.3`) and sends `image_tag` → **image_tag_match** at 0.9
+- CI tags image with commit SHA (`app:abc123def`) and sends `git_commit_sha` → **image_sha_inferred** at 0.85
+
+### Orphan Detection
+
+If no matching intent event is found across all three tiers, the execution is marked as **orphaned** — meaning it happened without a corresponding CI signal. This helps identify unexpected or undocumented changes.
+
+### Rollback Semantics
+
+A rollback in Kubernetes increments the Deployment's `generation`, producing a **new execution event** even if the image SHA matches a previously deployed version. Valiant treats rollbacks as regular deployments — there is no explicit `is_rollback` field.
+
+When a rollback's image tag matches multiple past intent events (e.g., you deployed `v1.2.3` last week and again today), the **closest-in-time** intent is linked. Only one link is created per tier, preventing ambiguous many-to-one mappings.
+
+### Tag Mutability Warning
+
+> **Warning**: Mutable image tags (`:latest`, `:staging`, `:dev`) degrade correlation reliability.
+
+When multiple distinct builds share the same tag string, the `image_tag_match` tier (0.9 confidence) becomes **probabilistic rather than deterministic** — a link may point to the wrong CI build. This produces false-positive correlations that are difficult to detect.
+
+**Recommendation**: Use **immutable tags** for production deployments:
+- Semantic versions: `app:v1.2.3`
+- Commit SHAs: `app:abc123def`
+- Build numbers: `app:build-4521`
+
+If you must use mutable tags, rely on `sha_match` (tier 1) by setting the `valiant.io/git-sha` annotation on your Deployments. This provides 1.0 confidence regardless of tag mutability.
+
+---
+
+## Config Trigger Linking
+
+Beyond Intent-Execution linking (CI build → K8s rollout), Valiant can detect when a **ConfigMap or Secret change preceded a deployment rollout** and link them as a potential trigger.
+
+### How It Works
+
+The linking direction is **reverse**: when a `deployment_rollout` or `statefulset_rollout` event occurs, the correlator looks **backwards in time** for recent config changes that affected the same service.
+
+```
+        ◄── Config Trigger Window (default 15m) ──►
+        ┌──────────────────────────────────────────┐
+        │  ConfigMap update (affected: api-gateway) │
+        └──────────────────────┬───────────────────┘
+                               │ within window?
+                               ▼
+                     Deployment rollout (api-gateway)
+                               │
+                               ▼
+                     EventLink { type: "config_trigger", confidence: 0.83 }
+```
+
+1. **Detection**: The K8s collector detects ConfigMap/Secret data changes via SHA256 hash comparison on each poll cycle.
+2. **Affected services discovery**: The collector scans all Deployments and StatefulSets to find workloads that reference the changed resource via:
+   - `envFrom.configMapRef` / `envFrom.secretRef`
+   - `env[].valueFrom.configMapKeyRef` / `secretKeyRef`
+   - `volumes[].configMap` / `volumes[].secret`
+3. **Linking on rollout**: When a rollout completes, `CreateConfigTriggerLinks()` queries for config changes that:
+   - Have the rollout's service in their `affected_services` array
+   - Occurred within the `config_trigger_dur` window (default 15m) before the rollout timestamp
+4. **Confidence**: Ranges from **0.7** (at the edge of the window) to **0.9** (immediately before the rollout), based on temporal proximity.
+
+### Known Limitation: Hot-Reload Blind Spot
+
+Config trigger linking only fires when a rollout follows a config change. If your application **hot-reloads** a mounted ConfigMap without triggering a pod restart (e.g., Spring Cloud Config, Envoy xDS, file-watcher patterns), there is no rollout event to anchor the search. The config change event is stored with `affected_services` populated, but the correlator has no execution event to link it to.
+
+**Impact**: A ConfigMap change that degrades a hot-reloading service will appear in the timeline but won't automatically get an impact analysis unless manually triggered via `POST /api/v1/analyze`.
+
+---
+
+## Blast Radius
+
+For ConfigMap and Secret changes, Valiant computes a **blast radius** - the set of workloads that consume the changed resource.
+
+```json
+{
+  "total_workloads": 3,
+  "affected_deployments": ["api-gateway", "auth-service"],
+  "affected_statefulsets": ["redis-cluster"]
+}
+```
+
+### Computation
+
+At collection time, the K8s collector discovers referencing workloads (same pod spec scan used for config trigger linking) and stores the blast radius on the event. This is:
+- **Nil** when no workloads reference the config resource (orphaned config)
+- **Populated** with the count and names of all Deployments + StatefulSets that mount or env-ref the resource
+
+### Usage
+
+Blast radius is stored as JSONB in the `change_events` table and copied to the `ImpactAnalysis` snapshot. It is **informational metadata** for user investigation - it does not directly influence the impact score or ranking algorithm. The value is in answering: *"How many services could this config change have broken?"*
 
 ---
 
@@ -148,6 +250,31 @@ Once an analysis is performed, the results are stored as an **immutable snapshot
 - Each snapshot includes: baseline metrics, impact metrics, deltas, impact score, impact level, and confidence score
 
 If an analysis already exists for an event, the engine returns the cached snapshot rather than recomputing.
+
+---
+
+## Contextual Deep Linking
+
+Valiant's contextual deep linking feature enhances traceability by allowing you to navigate directly from a change event in the UI to its original source in external systems, such as Git repositories, CI/CD pipelines, or deployment dashboards. This is achieved by generating clickable URLs based on metadata you provide in change events and templates defined in your `config.yaml`.
+
+### How it Works
+
+1.  **Metadata from Event Payload:** When you send a `ChangeEvent` to Valiant's API (e.g., via `curl`), you include relevant key-value pairs in the `metadata` field (e.g., `git_commit_sha`, `repository_url`, `jenkins_build_id`, `argocd_app_name`).
+2.  **Configured Link Templates:** In your `config.yaml`, you define `linking` templates. Each template specifies:
+    *   **`name`**: The text displayed for the link in the UI.
+    *   **`metadata_has`**: A list of metadata keys that *must* be present in the event's metadata for this specific link to be generated. This ensures only valid, actionable links are created.
+    *   **`url_template`**: A Go template string that uses the event's metadata to construct the full URL (e.g., `{{ .repository_url }}/commit/{{ .git_commit_sha }}`).
+3.  **Backend Generation:** The Valiant backend processes incoming events. For each event, it attempts to match its metadata against your configured link templates. If a template's `metadata_has` conditions are met, the `url_template` is executed, and a clickable link is generated.
+4.  **Frontend Display:** The generated links are included in the API response and displayed in the Valiant UI as prominent, pill-style buttons within the event details.
+
+### Enabling Deep Links for Your System
+
+To utilize this feature, you need to:
+
+1.  **Configure Link Templates:** Add a `linking` section to your `config.yaml` with templates appropriate for your external systems (e.g., GitHub, GitLab, Jenkins, ArgoCD). See the [Configuration](configuration.md) documentation for detailed examples.
+2.  **Send Rich Metadata:** Ensure your CI/CD pipelines or scripts include the necessary metadata keys (as required by your templates) in the `metadata` field of the `ChangeEvent` payload when calling Valiant's `POST /api/v1/events` endpoint.
+
+This flexible approach allows you to integrate Valiant with any system where you can extract relevant URL components into event metadata, without requiring Valiant to directly integrate with or monitor those systems.
 
 ---
 

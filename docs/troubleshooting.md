@@ -49,14 +49,43 @@ Analysis failed: prometheus query error
 
 ### Events Show as "Orphaned"
 
-An event is marked orphaned when Valiant can't find a matching CI (intent) event within the correlation window.
+An event is marked orphaned when Valiant can't find a matching CI (intent) event within the correlation window across all three linking tiers (`sha_match`, `image_tag_match`, `image_sha_inferred`).
 
 **This happens when**:
 - No CI event was sent with a matching `git_commit_sha` or `image_tag`
 - The CI event was sent more than `intent_execution_correlation_window` (default 1h) before the deployment
 - The execution event has no `git_commit_sha` or `image_tag` metadata at all
+- The image tag doesn't contain the commit SHA (for `image_sha_inferred` fallback)
 
-**To fix**: Ensure your CI pipeline sends an event to `POST /api/v1/events` with matching metadata before the deployment occurs.
+**To fix**: Ensure your CI pipeline sends an event to `POST /api/v1/events` with at least one of:
+- `metadata.image_tag` matching the container image (zero-config, 0.9 confidence)
+- `metadata.git_commit_sha` matching a `valiant.io/git-sha` annotation (1.0 confidence)
+- `metadata.git_commit_sha` where the image tag contains the SHA prefix (0.85 confidence)
+
+### Events Linked to the Wrong CI Build
+
+**What it means**: An execution event is correlated with a CI build that didn't actually produce the deployed artifact.
+
+**Why it happens**: This typically occurs when using **mutable image tags** (`:latest`, `:staging`, `:dev`). Multiple CI builds produce different images under the same tag, so Valiant's `image_tag_match` (0.9 confidence) links to whichever CI event has the matching tag — which may be the wrong build.
+
+**To fix**:
+- Switch to **immutable tags** (semver, commit SHA, build number) for production deployments
+- Set the `valiant.io/git-sha` annotation on Deployments so Valiant can use `sha_match` (1.0 confidence) instead of relying on tag matching
+- Check the `link_reason` field in the API response to verify which metadata was used for linking
+
+### Clock Skew Between CI and Cluster
+
+**What it means**: CI events and K8s execution events have mismatched timestamps, causing linking failures or `invalid_time` rejections.
+
+**How Valiant handles clock skew**:
+- Timestamps more than **2 minutes in the future** are flagged as `invalid_time` at ingestion (the event is stored but excluded from analysis)
+- The default **1-hour correlation window** (`intent_execution_correlation_window`) provides implicit tolerance for clock drift between CI systems and the Kubernetes cluster
+- If CI and cluster clocks differ by less than 1 hour, linking still works correctly
+
+**To fix**:
+- Ensure NTP is configured on both CI runners and cluster nodes
+- If drift exceeds 1 hour, increase `intent_execution_correlation_window` in `config.yaml`
+- Check `skew_seconds` in the API response for events marked `invalid_time`
 
 ---
 

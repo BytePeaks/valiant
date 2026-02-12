@@ -11,7 +11,10 @@ $SUITES = @(
     "correlator-engine",
     "intent-execution-linking",
     "time-windows",
-    "kubernetes-collector"
+    "kubernetes-collector",
+    "deep-linking",
+    "timestamp-guardrail"
+    "event-links"
 )
 
 $BACKEND_UNIT_TEST_NAME = "backend-unit-tests"

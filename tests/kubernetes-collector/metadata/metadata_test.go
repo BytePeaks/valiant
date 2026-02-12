@@ -38,7 +38,7 @@ func TestDeploymentMetadata_AllExpectedKeys(t *testing.T) {
 
 	select {
 	case event := <-eventChan:
-		expectedKeys := []string{"namespace", "kind", "generation", "image", "intent_source", "git_sha", "rollout_start", "rollout_end"}
+		expectedKeys := []string{"namespace", "kind", "generation", "image", "intent_source", "git_commit_sha", "rollout_start", "rollout_end"}
 		for _, key := range expectedKeys {
 			assert.Contains(t, event.Metadata, key, "Missing metadata key: %s", key)
 		}

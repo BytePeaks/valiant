@@ -17,7 +17,10 @@ func TestOrphanDetection_NoLinkingMetadata(t *testing.T) {
 	require.NoError(t, err)
 	defer shared.CleanupTestDB(db, schemaName)
 
-	storage := storage.NewPostgresStorage(db)
+	cfg := &config.Config{}
+	cfg.Analysis.IntentExecutionCorrelationDur = 2 * time.Hour
+
+	storage := storage.NewPostgresStorage(db, cfg)
 	mockMetrics := &shared.MockMetricsProvider{}
 
 	// Create an execution event without any linking metadata
@@ -29,9 +32,6 @@ func TestOrphanDetection_NoLinkingMetadata(t *testing.T) {
 	err = storage.SaveChangeEvent(context.Background(), execEvent)
 	require.NoError(t, err)
 	
-	cfg := &config.Config{}
-	cfg.Analysis.IntentExecutionCorrelationDur = 2 * time.Hour
-
 	engine := correlator.NewEngine(storage, mockMetrics, cfg)
 
 	// ACT

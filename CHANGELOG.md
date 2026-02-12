@@ -22,26 +22,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Defined interfaces for `Storage`, `MetricsProvider`, and `Collector`.
   - Skeleton implementations for PostgreSQL storage, Prometheus metrics, and Kubernetes, Git, and CI/CD collectors.
   - Core impact correlation engine logic with configurable weights and thresholds.
+  - Custom weights of metrics (built-in and custom) applicable in config.yaml
+  - **Timestamp Guardrail for ChangeEvent Ingestion**: Implemented a defensive mechanism to prevent `ChangeEvent`s with future timestamps from entering the analysis workflow.
+    - Defined a `max_future_skew` of 2 minutes (hardcoded). Events with `Timestamp` or `EndTime` beyond this future limit are marked as invalid.
+    - Invalid events are persisted with `status='invalid_time'`, `invalid_reason` (e.g., `timestamp_in_future`), and `skew_seconds` for auditability.
+    - Structured warning logs are emitted for invalid events.
+    - Analysis workers (`GetEventsPendingAnalysis`) now explicitly filter and skip events with `status != 'ready'`, preventing them from entering the analysis queue.
+  - **Configurable Worker Polling Interval**: Made the analysis worker's polling frequency configurable via `config.yaml`.
+    - Added a `worker.polling_interval` field to `config.yaml` (default "5m"), allowing users to adjust how often the worker checks for new events to process.
+    - The backend worker now uses this configurable interval.
   - HTTP API server with health check, event submission, event listing, and impact analysis endpoints.
   - Initial database migration for the `change_events` table.
   - Environment-based configuration management.
-- **Frontend (Next.js):**
-  - Next.js 16 project skeleton with TypeScript and React 19.
-  - Root layout with Inter font and global CSS.
-  - Implemented `Timeline` and `TimelineEvent` components.
-  - Added on-demand impact analysis triggering from the UI.
-  - Added detailed metric deltas breakdown in the analysis view with improved visual design (cards, colors).
-  - Added "Show More" pagination logic to the timeline view.
-  - Polished UI with `lucide-react` icons and improved layout for events and metrics.
-  - Implemented dedicated Service Dashboard pages (`/services/[name]`) for deep-linking and focused analysis.
-  - Enhanced Service Filter UI with focus links.
-  - Added "Pending Analysis" badge for events where the impact window (35m) has not yet closed.
-  - Fixed filtering logic in Service Pages to handle URL encoding correctly.
-  - Refined Service Filter pills on homepage to embed the focus link inside the pill.
-  - Enforced impact window validation in the backend: `AnalyzeImpact` now returns a specific error and "PENDING" status if called too early, preventing premature analysis.
-  - Added tooltips to metric cards to explain what each metric represents.
-  - Added "time ago" badge (e.g., "5m ago") next to event timestamps.
-  - Added safe handling of null API responses in `fetchChangeEvents`.
+  - Implemented `PostgresStorage` with actual SQL queries for saving and retrieving change events.
+  - Added automatic execution of `001_initial_schema.sql` on backend startup.
+  - Implemented CORS middleware to allow cross-origin requests from the frontend.
+  - Updated `main.go` to connect to PostgreSQL using `lib/pq` and configuration.
+  - Implemented `PrometheusClient` with actual PromQL queries for error rate, latency, RPS, and saturation metrics.
+  - Basic homepage component.
+  - API client layer for interacting with the backend.
+- **Deep Linking Utility**:
+  - Implemented dynamic generation of contextual links within the backend's event retrieval (specifically `PostgresStorage.GetEventsPendingAnalysis`) based on configurable `LinkTemplate`s.
+  - Enhanced `PostgresStorage` to gracefully handle invalid URL templates and missing metadata keys, skipping link generation when `<no value>` is produced.
+  - Expanded deep linking test suite (`tests/deep-linking`) with comprehensive edge cases, including empty `MetadataHas`, static URLs, special characters in metadata, and cases with partial or missing metadata.
+  - Updated example seed scripts (`example/scripts/seed_data.ps1`, `example/scripts/seed_data.sh`) to generate events with varied metadata for deep linking, including valid, partially valid, and invalid scenarios, enabling thorough testing and demonstration.
 - **Documentation:**
   - Added `HOW_TO_USE.md` with "Quick Start", "Core Concepts", and "For Dummies" guide on connecting apps.
   - Fixed missing Tailwind CSS configuration (`tailwind.config.ts`, `postcss.config.js`) and dependencies.
@@ -64,15 +68,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Refined K8s detection to capture precise `rollout_start` and `rollout_end` timestamps for impact anchoring.
   - Refactored `Collector` interface to be streaming/push-based (`Start(ctx, chan)`).
 - **Frontend (Next.js):**
+  - Next.js 16 project skeleton with TypeScript and React 19.
+  - Root layout with Inter font and global CSS.
+  - Implemented `Timeline` and `TimelineEvent` components.
+  - Added on-demand impact analysis triggering from the UI.
+  - Added detailed metric deltas breakdown in the analysis view with improved visual design (cards, colors).
+  - Added "Show More" pagination logic to the timeline view.
+  - Polished UI with `lucide-react` icons and improved layout for events and metrics.
+  - Implemented dedicated Service Dashboard pages (`/services/[name]`) for deep-linking and focused analysis.
+  - Enhanced Service Filter UI with focus links.
+  - Added "Pending Analysis" badge for events where the impact window (35m) has not yet closed.
+  - Fixed filtering logic in Service Pages to handle URL encoding correctly.
+  - Refined Service Filter pills on homepage to embed the focus link inside the pill.
+  - Enforced impact window validation in the backend: `AnalyzeImpact` now returns a specific error and "PENDING" status if called too early, preventing premature analysis.
+  - Added tooltips to metric cards to explain what each metric represents.
+  - Added "time ago" badge (e.g., "5m ago") next to event timestamps.
+  - Added safe handling of null API responses in `fetchChangeEvents`.
+  - Modal with PromQL queries and their weights for overall score.
 - **Infrastructure:**
   - Dockerfiles for Backend and Frontend.
   - docker-compose.yml for full stack local development (Postgres, Backend, Frontend).
   - Added bash and PowerShell scripts for seeding mock data.
-- **Backend (Go):**
-  - Implemented `PostgresStorage` with actual SQL queries for saving and retrieving change events.
-  - Added automatic execution of `001_initial_schema.sql` on backend startup.
-  - Implemented CORS middleware to allow cross-origin requests from the frontend.
-  - Updated `main.go` to connect to PostgreSQL using `lib/pq` and configuration.
-  - Implemented `PrometheusClient` with actual PromQL queries for error rate, latency, RPS, and saturation metrics.
-  - Basic homepage component.
-  - API client layer for interacting with the backend.
+

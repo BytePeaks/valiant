@@ -68,4 +68,3 @@ analysis:
 		t.Errorf("expected orphan correlation 2h, got %v", cfg.Analysis.IntentExecutionCorrelationDur)
 	}
 }
-

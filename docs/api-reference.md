@@ -53,8 +53,7 @@ Submit a new change event (e.g., from a CI/CD pipeline).
 **Response:** `201 Created` (empty body)
 
 **Errors:**
-- `400 Bad Request` - Invalid JSON payload
-
+- `400 Bad Request` - Invalid JSON payload, or `timestamp`/`end_time` are too far in the future.
 ---
 
 ### `GET /api/v1/events`
@@ -86,9 +85,20 @@ List change events with optional filtering and pagination.
       "affected_services": ["payment-service"],
       "timestamp": "2026-01-31T15:30:00Z",
       "end_time": "2026-01-31T15:32:00Z",
-      "metadata": { "git_commit_sha": "a1b2c3d" },
+      "metadata": {
+        "git_commit_sha": "a1b2c3d",
+        "repository_url": "https://github.com/my-org/my-repo"
+      },
       "summary": "Rolled out payment-service v2.4.0",
-      "analysis_status": "ready"
+      "status": "ready",
+      "invalid_reason": "",
+      "skew_seconds": 0,
+      "contextual_links": [
+        {
+          "name": "View Commit on GitHub",
+          "url": "https://github.com/my-org/my-repo/commit/a1b2c3d"
+        }
+      ]
     }
   ],
   "total": 42,
@@ -97,10 +107,24 @@ List change events with optional filtering and pagination.
 }
 ```
 
-The `analysis_status` field indicates the event's analysis state:
-- `"pending"` - Impact window hasn't closed yet
-- `"ready"` - Window closed, no analysis performed yet
-- `"completed"` - Analysis snapshot exists
+The `status` field indicates the event's validity state and its eligibility for analysis:
+- `"ready"` - Event is valid and eligible for analysis (or has already been analyzed).
+- `"invalid_time"` - Event's `timestamp` or `end_time` was too far in the future at ingestion (more than 2 minutes from the backend's clock), preventing it from being analyzed. This event will be ignored by the analysis worker.
+
+| Field | Type | Description |
+|:------|:-----|:------------|
+| `id` | string | Unique identifier for the event |
+| `trigger_type` | string | `"CI"`, `"GitOps"`, or `"manual"` |
+| `change_type` | string | e.g., `"deployment_rollout"`, `"build_success"` |
+| `affected_services` | string[] | Services affected by this change |
+| `summary` | string | Human-readable description |
+| `timestamp` | string (RFC3339) | When the change started |
+| `end_time` | string (RFC3339) | When the change completed (optional) |
+| `metadata` | object | Key-value pairs |
+| `status` | string | Indicates the event's validity state (`"ready"` or `"invalid_time"`) |
+| `invalid_reason` | string | If `status` is `"invalid_time"`, provides the reason (e.g., `"timestamp_in_future"`) |
+| `skew_seconds` | int | If `status` is `"invalid_time"`, indicates how many seconds into the future the timestamp was |
+| `contextual_links` | object[] | Generated deep links to external systems |
 
 ---
 
@@ -164,6 +188,13 @@ This is returned when analysis is requested before the post-execution impact win
 
 List all services that have at least one change event.
 
+**Query Parameters:**
+
+| Parameter | Type | Description |
+|:----------|:-----|:------------|
+| `namespace` | string | Filter by Kubernetes namespace. When `kubernetes.namespaces` is configured, the namespace is validated against the config — unconfigured namespaces return an empty list. |
+| `linked_only` | string | Set to `"true"` to return only services that have intent-execution links (`sha_match`, `image_tag_match`, or `image_sha_inferred`). |
+
 **Response:** `200 OK`
 
 ```json
@@ -176,12 +207,12 @@ List all services that have at least one change event.
 
 ### `GET /api/v1/namespaces`
 
-List all known namespaces (merged from database events and config).
+List monitored namespaces. When `kubernetes.namespaces` is configured in `config.yaml`, returns exactly those namespaces (sorted). When unconfigured, falls back to discovering namespaces from stored events in the database.
 
 **Response:** `200 OK`
 
 ```json
-["default", "payment-app", "production"]
+["default", "payment-app"]
 ```
 
 ---

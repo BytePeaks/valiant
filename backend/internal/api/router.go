@@ -2,7 +2,9 @@ package api
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -37,6 +39,7 @@ func (router *Router) Handler() http.Handler {
 	})
 
 	mux.HandleFunc("/api/v1/events", router.handleEvents)
+	mux.HandleFunc("/api/v1/events/", router.handleEventLinks)
 	mux.HandleFunc("/api/v1/services", router.handleServices)
 	mux.HandleFunc("/api/v1/services/", router.handleServicePreferences)
 	mux.HandleFunc("/api/v1/analyze", router.handleAnalysis)
@@ -54,7 +57,26 @@ func (router *Router) handleServices(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	services, err := router.storage.GetServices(r.Context())
+	namespace := r.URL.Query().Get("namespace")
+	linkedOnly := r.URL.Query().Get("linked_only") == "true"
+
+	// Validate namespace against config if namespaces are configured
+	if namespace != "" && len(router.config.Kubernetes.Namespaces) > 0 {
+		allowed := false
+		for _, ns := range router.config.Kubernetes.Namespaces {
+			if ns == namespace {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode([]string{})
+			return
+		}
+	}
+
+	services, err := router.storage.GetServices(r.Context(), namespace, linkedOnly)
 	if err != nil {
 		http.Error(w, "Failed to fetch services", http.StatusInternalServerError)
 		return
@@ -131,7 +153,11 @@ func corsMiddleware(next http.Handler) http.Handler {
 // eventWithStatus wraps a ChangeEvent with its analysis status for the API response.
 type eventWithStatus struct {
 	domain.ChangeEvent
-	AnalysisStatus string `json:"analysis_status"` // "pending", "ready", "completed"
+	AnalysisStatus string              `json:"analysis_status"`           // "pending", "ready", "completed"
+	LinkedIntent   *domain.ChangeEvent `json:"linked_intent,omitempty"`   // The CI event that triggered this execution
+	LinkType       string              `json:"link_type,omitempty"`       // "sha_match" or "image_tag_match"
+	LinkConfidence float64             `json:"link_confidence,omitempty"` // 0.0 to 1.0
+	LinkReason     string              `json:"link_reason,omitempty"`     // Human-readable reason from link metadata
 }
 
 // computeAnalysisStatus determines the analysis state for an event.
@@ -162,9 +188,35 @@ func (router *Router) handleEvents(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		// Set IsIntent and IsExecution based on TriggerType for API-submitted events
+		if isExecutionTriggerType(event.TriggerType) {
+			event.IsExecution = true
+			event.IsIntent = false
+		} else { // Default or explicit intent type
+			event.IsIntent = true
+			event.IsExecution = false
+		}
+
 		if err := router.storage.SaveChangeEvent(r.Context(), event); err != nil {
 			http.Error(w, "Failed to save event", http.StatusInternalServerError)
 			return
+		}
+
+		// Eager linking: attempt to create intent-execution links immediately
+		if event.IsExecution {
+			links, err := router.correlator.CreateIntentExecutionLinks(r.Context(), event)
+			if err != nil {
+				log.Printf("Warning: eager linking failed for execution event %s: %v", event.ID, err)
+			} else if len(links) == 0 {
+				log.Printf("Orphaned execution event %s: %s (no matching CI event found)", event.ID, event.Summary)
+			}
+		} else if event.IsIntent {
+			links, err := router.correlator.LinkIntentToExecutions(r.Context(), event)
+			if err != nil {
+				log.Printf("Warning: eager linking failed for intent event %s: %v", event.ID, err)
+			} else if len(links) > 0 {
+				log.Printf("Intent event %s linked to %d execution(s)", event.ID, len(links))
+			}
 		}
 
 		w.WriteHeader(http.StatusCreated)
@@ -208,6 +260,18 @@ func (router *Router) handleEvents(w http.ResponseWriter, r *http.Request) {
 			filters["search"] = v
 		}
 
+		if v := q.Get("is_execution_only"); v != "" {
+			if b, err := strconv.ParseBool(v); err == nil && b {
+				filters["is_execution_only"] = true
+			}
+		}
+
+		if v := q.Get("linked_only"); v != "" {
+			if b, err := strconv.ParseBool(v); err == nil && b {
+				filters["linked_only"] = true
+			}
+		}
+
 		events, total, err := router.storage.GetChangeEvents(r.Context(), filters)
 		if err != nil {
 			http.Error(w, "Failed to fetch events", http.StatusInternalServerError)
@@ -229,13 +293,34 @@ func (router *Router) handleEvents(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// Enrich events with analysis status
+		// Enrich events with analysis status and linked intent info
 		enriched := make([]eventWithStatus, len(events))
 		for i, e := range events {
-			enriched[i] = eventWithStatus{
+			ews := eventWithStatus{
 				ChangeEvent:    e,
 				AnalysisStatus: router.computeAnalysisStatus(e, analyzedMap[e.ID]),
 			}
+
+			// Look up linked intent for execution events
+			if e.IsExecution {
+				links, err := router.storage.GetEventLinksByExecutionID(r.Context(), e.ID)
+				if err == nil {
+					for _, link := range links {
+						if link.LinkType == "sha_match" || link.LinkType == "image_tag_match" || link.LinkType == "image_sha_inferred" {
+							intentEvent, err := router.storage.GetChangeEventByID(r.Context(), link.IntentEventID)
+							if err == nil {
+								ews.LinkedIntent = &intentEvent
+								ews.LinkType = link.LinkType
+								ews.LinkConfidence = link.Confidence
+								ews.LinkReason = link.Metadata["reason"]
+							}
+							break // Use the highest-confidence link (already sorted by confidence DESC)
+						}
+					}
+				}
+			}
+
+			enriched[i] = ews
 		}
 
 		limit := 50
@@ -260,6 +345,38 @@ func (router *Router) handleEvents(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusMethodNotAllowed)
+}
+
+func (router *Router) handleEventLinks(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Parse event ID from path: /api/v1/events/{id}/links
+	path := strings.TrimPrefix(r.URL.Path, "/api/v1/events/")
+	parts := strings.SplitN(path, "/", 2)
+	if len(parts) < 2 || parts[1] != "links" || parts[0] == "" {
+		http.Error(w, "Not found", http.StatusNotFound)
+		return
+	}
+	eventID := parts[0]
+
+	links, err := router.storage.GetEventLinksByEventID(r.Context(), eventID)
+	if err != nil {
+		http.Error(w, "Failed to fetch event links", http.StatusInternalServerError)
+		return
+	}
+
+	if links == nil {
+		links = []domain.EventLink{}
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"event_id": eventID,
+		"links":    links,
+		"total":    len(links),
+	})
 }
 
 func (router *Router) handleAnalysis(w http.ResponseWriter, r *http.Request) {
@@ -302,31 +419,25 @@ func (router *Router) handleNamespaces(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// If namespaces are explicitly configured, return only those
+	if len(router.config.Kubernetes.Namespaces) > 0 {
+		ns := make([]string, len(router.config.Kubernetes.Namespaces))
+		copy(ns, router.config.Kubernetes.Namespaces)
+		sort.Strings(ns)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(ns)
+		return
+	}
+
+	// Fallback: discover from DB when no namespaces configured
 	dbNamespaces, err := router.storage.GetNamespaces(r.Context())
 	if err != nil {
 		http.Error(w, "Failed to fetch namespaces from database", http.StatusInternalServerError)
 		return
 	}
 
-	// Merge with namespaces from config
-	configNamespaces := router.config.Kubernetes.Namespaces
-	
-	// Use a map to store unique namespaces
-	allNamespaces := make(map[string]bool)
-	for _, ns := range dbNamespaces {
-		allNamespaces[ns] = true
-	}
-	for _, ns := range configNamespaces {
-		allNamespaces[ns] = true
-	}
-
-	// Convert map keys to a slice
-	uniqueNamespaces := make([]string, 0, len(allNamespaces))
-	for ns := range allNamespaces {
-		uniqueNamespaces = append(uniqueNamespaces, ns)
-	}
-	
-	json.NewEncoder(w).Encode(uniqueNamespaces)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(dbNamespaces)
 }
 
 func (router *Router) handleRankings(w http.ResponseWriter, r *http.Request) {
@@ -373,4 +484,17 @@ func (router *Router) handleRankings(w http.ResponseWriter, r *http.Request) {
 		"ranked":  ranked,
 		"total":   len(ranked),
 	})
+}
+
+// isIntentTriggerType determines if a trigger type generally represents an 'intent' event.
+func isIntentTriggerType(triggerType string) bool {
+	t := strings.ToLower(triggerType)
+	return t == "ci" || t == "build_success" || t == "cicd_deploy_intent" ||
+		t == "github-actions" || t == "gitlab-ci" || t == "jenkins" || t == "codebuild"
+}
+
+// isExecutionTriggerType determines if a trigger type generally represents an 'execution' event (non-k8s).
+func isExecutionTriggerType(triggerType string) bool {
+	t := strings.ToLower(triggerType)
+	return t == "manual" || t == "gitops" || t == "kubernetes-api" || t == "argocd" || t == "gitops-config"
 }

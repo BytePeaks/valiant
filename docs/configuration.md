@@ -120,6 +120,9 @@ analysis:
 
   # Duration to look back from an execution event to find a corresponding intent (CI) event.
   # If no match is found within this window, the execution event is marked as orphaned.
+  # This window also provides implicit clock skew tolerance: if CI and cluster clocks
+  # differ by less than this duration, linking still works. Increase if you observe
+  # orphaned events caused by clock drift rather than missing CI signals.
   intent_execution_correlation_window: "1h"
 ```
 
@@ -148,6 +151,53 @@ analysis:
     orders_per_minute: 0.1
     payment_failure_rate: 0.2
 ```
+
+### Linking Configuration
+
+Valiant can automatically generate clickable deep links to external systems (like Git repositories, CI/CD pipelines, or deployment dashboards) based on metadata provided in change events. This enhances traceability by allowing users to quickly navigate to the source of a change.
+
+The `linking` section in your `config.yaml` allows you to define templates for these links. Each template specifies the conditions under which a link should be generated and how its URL should be constructed.
+
+```yaml
+# Linking Configuration
+# ---------------------
+# Define templates to generate clickable deep links from event metadata.
+# These links will appear in the UI for relevant ChangeEvents.
+#
+# Each template specifies:
+# - name: Display name for the link in the UI.
+# - metadata_has: A list of metadata keys that MUST be present in a ChangeEvent's
+#                 metadata for this link template to be considered. This prevents
+#                 broken or irrelevant links.
+# - url_template: A Go template string to construct the URL. Variables correspond
+#                 to keys in the ChangeEvent's metadata (e.g., {{ .git_commit_sha }}).
+#                 If a required metadata key is missing, the link will not be generated.
+linking:
+  - name: "View Commit on GitHub"
+    metadata_has: ["repository_url", "git_commit_sha"]
+    url_template: "{{ .repository_url }}/commit/{{ .git_commit_sha }}"
+
+  - name: "View Build on Jenkins"
+    metadata_has: ["jenkins_url", "jenkins_job_name", "jenkins_build_id"]
+    url_template: "{{ .jenkins_url }}/job/{{ .jenkins_job_name }}/{{ .jenkins_build_id }}"
+
+  - name: "Open ArgoCD Application"
+    metadata_has: ["argocd_url", "argocd_app_name"]
+    url_template: "{{ .argocd_url }}/applications/{{ .argocd_app_name }}"
+```
+
+### Worker
+
+```yaml
+worker:
+  # How often the analysis worker checks for new events to process.
+  # Supports standard Go durations (e.g., "1m", "30s", "1h").
+  polling_interval: "5m"
+```
+
+**Template Variables:**
+
+The `url_template` uses Go's `text/template` syntax. You can reference any key from the `ChangeEvent`'s `metadata` map using the `{{ .keyName }}` notation. For example, if your event metadata contains `{"git_commit_sha": "abcdef", "repository_url": "https://github.com/my-org/my-repo"}`, the template `{{ .repository_url }}/commit/{{ .git_commit_sha }}` would resolve to `https://github.com/my-org/my-repo/commit/abcdef`.
 
 ---
 

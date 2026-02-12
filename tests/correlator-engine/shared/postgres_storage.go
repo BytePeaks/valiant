@@ -3,6 +3,7 @@ package shared
 import (
 	"context"
 	"database/sql"
+	"valiant/internal/config"
 	"valiant/internal/domain"
 	"valiant/internal/storage"
 	"time"
@@ -14,9 +15,9 @@ type TestPostgresStorage struct {
 }
 
 // NewTestPostgresStorage creates a new TestPostgresStorage instance.
-func NewTestPostgresStorage(db *sql.DB) *TestPostgresStorage {
+func NewTestPostgresStorage(db *sql.DB, cfg *config.Config) *TestPostgresStorage {
 	return &TestPostgresStorage{
-		PostgresStorage: storage.NewPostgresStorage(db),
+		PostgresStorage: storage.NewPostgresStorage(db, cfg),
 	}
 }
 
@@ -39,8 +40,8 @@ func (s *TestPostgresStorage) GetChangeEventByID(ctx context.Context, id string)
 	return s.PostgresStorage.GetChangeEventByID(ctx, id)
 }
 
-func (s *TestPostgresStorage) GetServices(ctx context.Context) ([]string, error) {
-	return s.PostgresStorage.GetServices(ctx)
+func (s *TestPostgresStorage) GetServices(ctx context.Context, namespace string, linkedOnly bool) ([]string, error) {
+	return s.PostgresStorage.GetServices(ctx, namespace, linkedOnly)
 }
 
 func (s *TestPostgresStorage) GetNamespaces(ctx context.Context) ([]string, error) {

@@ -1,9 +1,16 @@
 import { MetricInfo } from '@/components/promql-modal';
 
+export interface ContextualLink {
+  name: string;
+  url: string;
+}
+
 export interface ChangeEvent {
   id: string;
   source: string; // Deprecated in favor of trigger_type
   trigger_type?: string;
+  is_intent?: boolean;
+  is_execution?: boolean;
   execution_id?: string;
   change_type: string;
   timestamp: string;
@@ -11,6 +18,11 @@ export interface ChangeEvent {
   summary: string;
   metadata: Record<string, string>;
   analysis_status?: 'pending' | 'ready' | 'completed';
+  contextual_links?: ContextualLink[];
+  linked_intent?: ChangeEvent;       // The CI event that triggered this execution
+  link_type?: string;                // "sha_match" or "image_tag_match"
+  link_confidence?: number;          // 0.0 to 1.0
+  link_reason?: string;              // Human-readable reason from link metadata
 }
 
 export interface MetricValues {
@@ -41,10 +53,11 @@ export interface EventFilters {
   offset?: number;
   service?: string;
   namespace?: string;
-  change_type?: string;
   from?: string;
   to?: string;
   search?: string;
+  isExecutionOnly?: boolean;
+  linked_only?: boolean;
 }
 
 export interface EventsResponse {
@@ -77,11 +90,21 @@ export async function fetchChangeEvents(
   filters?: EventFilters,
   signal?: AbortSignal
 ): Promise<EventsResponse> {
+  // Map camelCase filter keys to snake_case backend query params
+  const keyMap: Record<string, string> = {
+    isExecutionOnly: 'is_execution_only',
+  };
+
   const params = new URLSearchParams();
   if (filters) {
     for (const [key, value] of Object.entries(filters)) {
       if (value !== undefined && value !== null && value !== '') {
-        params.set(key, String(value));
+        const paramKey = keyMap[key] || key;
+        if (typeof value === 'boolean') {
+          params.set(paramKey, value.toString());
+        } else {
+          params.set(paramKey, String(value));
+        }
       }
     }
   }
@@ -104,8 +127,13 @@ export async function fetchChangeEvents(
   };
 }
 
-export async function fetchServices(): Promise<string[]> {
-  const res = await fetch(`${API_BASE_URL}/services`);
+export async function fetchServices(namespace?: string, linkedOnly?: boolean): Promise<string[]> {
+  const params = new URLSearchParams();
+  if (namespace) params.set('namespace', namespace);
+  if (linkedOnly) params.set('linked_only', 'true');
+  const query = params.toString();
+  const url = query ? `${API_BASE_URL}/services?${query}` : `${API_BASE_URL}/services`;
+  const res = await fetch(url);
   if (!res.ok) {
     throw new Error('Failed to fetch services');
   }

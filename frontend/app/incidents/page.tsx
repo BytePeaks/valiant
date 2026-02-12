@@ -45,7 +45,7 @@ export default function IncidentsPage() {
   const [error, setError] = useState('');
 
   useEffect(() => {
-    fetchServices().then(setServices);
+    fetchServices(undefined, true).then(setServices);
   }, []);
 
   // Default to last 2 hours when service is selected

@@ -9,17 +9,6 @@ import PromQLModal, { MetricInfo } from '@/components/promql-modal';
 
 const PAGE_SIZE = 10;
 
-// Metric definitions for the PromQL Modal
-const CHANGE_TYPES = [
-  { value: 'deployment_rollout', label: 'Deployment' },
-  { value: 'configmap_update', label: 'ConfigMap' },
-  { value: 'secret_update', label: 'Secret' },
-  { value: 'build_success', label: 'CI Build' },
-  { value: 'tag_created', label: 'Tag' },
-  { value: 'release_published', label: 'Release' },
-  { value: 'branch_merged', label: 'Merge' },
-];
-
 export default function Home() {
   const [events, setEvents] = useState<ChangeEvent[]>([]);
   const [total, setTotal] = useState(0);
@@ -28,11 +17,10 @@ export default function Home() {
   const [selectedService, setSelectedService] = useState<string | null>(null);
   const [namespaces, setNamespaces] = useState<string[]>([]);
   const [selectedNamespace, setSelectedNamespace] = useState<string | null>(null);
-  const [selectedChangeType, setSelectedChangeType] = useState<string | null>(null);
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [loading, setLoading] = useState(true);
-  const [filtersVisible, setFiltersVisible] = useState(true);
+  const [filtersVisible, setFiltersVisible] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -111,7 +99,6 @@ export default function Home() {
     service: string | null,
     namespace: string | null,
     search: string,
-    changeType: string | null,
     from: string,
     to: string,
   ) => {
@@ -130,9 +117,9 @@ export default function Home() {
         ...(service ? { service } : {}),
         ...(namespace ? { namespace } : {}),
         ...(search ? { search } : {}),
-        ...(changeType ? { change_type: changeType } : {}),
         ...(from ? { from: new Date(from).toISOString() } : {}),
         ...(to ? { to: new Date(to).toISOString() } : {}),
+        linked_only: true,
       },
       controller.signal
     )
@@ -152,27 +139,34 @@ export default function Home() {
       .finally(() => setLoading(false));
   }, []);
 
-  // Load services and namespaces once on mount
+  // Load namespaces once on mount
   useEffect(() => {
-    Promise.all([fetchServices(), fetchNamespaces()])
-      .then(([servicesData, namespacesData]) => {
-        setServices(servicesData);
-        setNamespaces(namespacesData);
-      });
+    fetchNamespaces().then(setNamespaces);
   }, []);
+
+  // Re-fetch services when namespace changes (filter services by selected namespace)
+  useEffect(() => {
+    fetchServices(selectedNamespace ?? undefined, true).then((servicesData) => {
+      setServices(servicesData);
+      // Clear selected service if it's no longer available in this namespace
+      if (selectedService && !servicesData.includes(selectedService)) {
+        setSelectedService(null);
+      }
+    });
+  }, [selectedNamespace]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Re-fetch when filters or search change
   useEffect(() => {
-    loadEvents(0, selectedService, selectedNamespace, debouncedSearch, selectedChangeType, dateFrom, dateTo);
-  }, [selectedService, selectedNamespace, debouncedSearch, selectedChangeType, dateFrom, dateTo, loadEvents]);
+    loadEvents(0, selectedService, selectedNamespace, debouncedSearch, dateFrom, dateTo);
+  }, [selectedService, selectedNamespace, debouncedSearch, dateFrom, dateTo, loadEvents]);
 
   const handleShowMore = () => {
     const nextOffset = offset + PAGE_SIZE;
-    loadEvents(nextOffset, selectedService, selectedNamespace, debouncedSearch, selectedChangeType, dateFrom, dateTo);
+    loadEvents(nextOffset, selectedService, selectedNamespace, debouncedSearch, dateFrom, dateTo);
   };
 
   const handleRefresh = () => {
-    loadEvents(0, selectedService, selectedNamespace, debouncedSearch, selectedChangeType, dateFrom, dateTo);
+    loadEvents(0, selectedService, selectedNamespace, debouncedSearch, dateFrom, dateTo);
   };
 
   const hasMore = events.length < total;
@@ -333,29 +327,6 @@ export default function Home() {
                 </div>
               </section>
 
-              {/* Change Type Filter */}
-              <section>
-                <div className="flex items-center gap-2 mb-4 text-xs font-bold text-gray-400 uppercase tracking-widest">
-                  Filter by Change Type
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  <button
-                    onClick={() => setSelectedChangeType(null)}
-                    className={`px-4 py-1.5 rounded-full text-xs font-bold transition-all border ${!selectedChangeType ? 'bg-blue-600 border-blue-600 text-white' : 'bg-white border-gray-200 text-gray-600 hover:border-blue-300'}`}
-                  >
-                    All Types
-                  </button>
-                  {CHANGE_TYPES.map(ct => (
-                    <button
-                      key={ct.value}
-                      onClick={() => setSelectedChangeType(ct.value === selectedChangeType ? null : ct.value)}
-                      className={`px-4 py-1.5 rounded-full text-xs font-bold transition-all border ${selectedChangeType === ct.value ? 'bg-blue-600 border-blue-600 text-white' : 'bg-white border-gray-200 text-gray-600 hover:border-blue-300'}`}
-                    >
-                      {ct.label}
-                    </button>
-                  ))}
-                </div>
-              </section>
             </div>
           )}
         </section>
