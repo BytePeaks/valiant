@@ -21,6 +21,7 @@ type ChangeEvent struct {
 	Metadata         map[string]string `json:"metadata"`                   // e.g., "git_commit_sha", "image_tag"
 	Summary          string            `json:"summary"`                    // Human-readable summary
 	ContextualLinks  []ContextualLink  `json:"contextual_links,omitempty"` //Field for generated deep links
+	BlastRadius      *BlastRadius      `json:"blast_radius,omitempty"`     // Scope of affected workloads (for config changes)
 	Status           string            `json:"status,omitempty"`
 	InvalidReason    string            `json:"invalid_reason,omitempty"`
 	SkewSeconds      int               `json:"skew_seconds,omitempty"`
@@ -36,11 +37,32 @@ type MetricValues struct {
 	AdditionalMetrics map[string]float64 `json:"additional_metrics,omitempty"` // New field for user-defined metrics
 }
 
+// EventLink represents a persistent link between an intent event (CI build, config change)
+// and an execution event (deployment/statefulset rollout).
+type EventLink struct {
+	ID               string            `json:"id"`
+	IntentEventID    string            `json:"intent_event_id"`
+	ExecutionEventID string            `json:"execution_event_id"`
+	LinkType         string            `json:"link_type"`  // "sha_match", "image_tag_match", "config_trigger"
+	Confidence       float64           `json:"confidence"` // 0.0 to 1.0
+	CreatedAt        time.Time         `json:"created_at"`
+	Metadata         map[string]string `json:"metadata,omitempty"`
+}
+
+// BlastRadius represents the scope of workloads affected by a config change.
+type BlastRadius struct {
+	TotalWorkloads       int      `json:"total_workloads"`
+	AffectedDeployments  []string `json:"affected_deployments"`
+	AffectedStatefulSets []string `json:"affected_statefulsets"`
+}
+
 // ImpactAnalysis represents the full analysis of a single change event.
 type ImpactAnalysis struct {
 	ChangeEvent     ChangeEvent  `json:"change_event"`
 	LinkedCIEvent   *ChangeEvent `json:"linked_ci_event,omitempty"` // Optional: Link to the CI event that caused the execution
 	IsOrphaned      bool         `json:"is_orphaned,omitempty"`     // True if no corresponding intent event was found
+	Links           []EventLink  `json:"links,omitempty"`           // Persistent links to intent/config events
+	BlastRadius     *BlastRadius `json:"blast_radius,omitempty"`    // Scope of affected workloads (for config changes)
 	BaselineMetrics MetricValues `json:"baseline_metrics"`
 	ImpactMetrics   MetricValues `json:"impact_metrics"`
 	Deltas          MetricValues `json:"deltas"`           // Percentage change for each metric

@@ -20,18 +20,26 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 )
 
+// WorkloadReferences holds references to workloads that reference a config resource.
+type WorkloadReferences struct {
+	Deployments  []string
+	StatefulSets []string
+}
+
 type KubernetesCollector struct {
-	clientset         kubernetes.Interface
-	kubeConfigPath    string
-	namespaces        []string
-	requireAnnot      bool
-	allowedSources    []string
-	watchConfigMaps   bool
-	watchSecrets      bool
-	lastProcessed     map[string]int64  // map["ns/name"]generation
-	lastProcessedSha  map[string]string // map["ns/name"]fingerprint
-	lastConfigMapHash map[string]string // map["ns/name"]sha256 of .data
-	lastSecretHash    map[string]string // map["ns/name"]sha256 of .data
+	clientset          kubernetes.Interface
+	kubeConfigPath     string
+	namespaces         []string
+	requireAnnot       bool
+	allowedSources     []string
+	watchConfigMaps    bool
+	watchSecrets       bool
+	lastProcessed      map[string]int64  // map["ns/name"]generation (Deployments)
+	lastProcessedSha   map[string]string // map["ns/name"]fingerprint (Deployments)
+	lastProcessedSS    map[string]int64  // map["ns/name"]generation (StatefulSets)
+	lastProcessedSSSha map[string]string // map["ns/name"]fingerprint (StatefulSets)
+	lastConfigMapHash  map[string]string // map["ns/name"]sha256 of .data
+	lastSecretHash     map[string]string // map["ns/name"]sha256 of .data
 }
 
 func NewKubernetesCollector(cfg config.Config, clientset kubernetes.Interface) (*KubernetesCollector, error) {
@@ -56,17 +64,19 @@ func NewKubernetesCollector(cfg config.Config, clientset kubernetes.Interface) (
 	}
 
 	return &KubernetesCollector{
-		clientset:         clientset,
-		kubeConfigPath:    cfg.Kubernetes.KubeConfigPath,
-		namespaces:        cfg.Kubernetes.Namespaces,
-		requireAnnot:      cfg.Kubernetes.RequireAnnotation,
-		allowedSources:    cfg.Kubernetes.AllowedSources,
-		watchConfigMaps:   cfg.Kubernetes.WatchConfigMaps,
-		watchSecrets:      cfg.Kubernetes.WatchSecrets,
-		lastProcessed:     make(map[string]int64),
-		lastProcessedSha:  make(map[string]string),
-		lastConfigMapHash: make(map[string]string),
-		lastSecretHash:    make(map[string]string),
+		clientset:          clientset,
+		kubeConfigPath:     cfg.Kubernetes.KubeConfigPath,
+		namespaces:         cfg.Kubernetes.Namespaces,
+		requireAnnot:       cfg.Kubernetes.RequireAnnotation,
+		allowedSources:     cfg.Kubernetes.AllowedSources,
+		watchConfigMaps:    cfg.Kubernetes.WatchConfigMaps,
+		watchSecrets:       cfg.Kubernetes.WatchSecrets,
+		lastProcessed:      make(map[string]int64),
+		lastProcessedSha:   make(map[string]string),
+		lastProcessedSS:    make(map[string]int64),
+		lastProcessedSSSha: make(map[string]string),
+		lastConfigMapHash:  make(map[string]string),
+		lastSecretHash:     make(map[string]string),
 	}, nil
 }
 
@@ -123,6 +133,44 @@ func (c *KubernetesCollector) listDeployments(ctx context.Context) ([]appsv1.Dep
 			continue
 		}
 		allItems = append(allItems, deps.Items...)
+	}
+	return allItems, watchedNamespaces
+}
+
+// listStatefulSets lists statefulsets across the configured namespaces, handling permission errors gracefully.
+func (c *KubernetesCollector) listStatefulSets(ctx context.Context) ([]appsv1.StatefulSet, map[string]bool) {
+	watchedNamespaces := make(map[string]bool)
+	for _, ns := range c.namespaces {
+		watchedNamespaces[ns] = true
+	}
+
+	if len(c.namespaces) == 0 {
+		allSS, err := c.clientset.AppsV1().StatefulSets("").List(ctx, metav1.ListOptions{})
+		if err != nil {
+			if k8serrors.IsForbidden(err) {
+				fmt.Printf("[valiant] RBAC error: cannot list StatefulSets cluster-wide. "+
+					"Apply deploy/kubernetes/rbac.yaml or configure specific namespaces in config.yaml. Error: %v\n", err)
+			} else {
+				fmt.Printf("Error listing statefulsets: %v\n", err)
+			}
+			return nil, watchedNamespaces
+		}
+		return allSS.Items, watchedNamespaces
+	}
+
+	var allItems []appsv1.StatefulSet
+	for _, ns := range c.namespaces {
+		ssets, err := c.clientset.AppsV1().StatefulSets(ns).List(ctx, metav1.ListOptions{})
+		if err != nil {
+			if k8serrors.IsForbidden(err) {
+				fmt.Printf("[valiant] RBAC error: cannot list StatefulSets in namespace %q. "+
+					"Apply deploy/kubernetes/rbac.yaml to enable visibility for this namespace.\n", ns)
+			} else {
+				fmt.Printf("Error listing statefulsets in namespace %s: %v\n", ns, err)
+			}
+			continue
+		}
+		allItems = append(allItems, ssets.Items...)
 	}
 	return allItems, watchedNamespaces
 }
@@ -247,11 +295,112 @@ func (c *KubernetesCollector) CollectAndSend(ctx context.Context, eventChan chan
 		}
 	}
 
+	// StatefulSet processing
+	allSSItems, _ := c.listStatefulSets(ctx)
+	if allSSItems == nil {
+		allSSItems = []appsv1.StatefulSet{}
+	}
+
+	for _, ss := range allSSItems {
+		key := fmt.Sprintf("%s/%s", ss.Namespace, ss.Name)
+
+		// Namespace Filter
+		if len(c.namespaces) > 0 && !watchedNamespaces[ss.Namespace] {
+			if isRecentStatefulSetRollout(&ss) && c.lastProcessedSS[key] < ss.Generation {
+				fmt.Printf("Ignored rollout: statefulset %s in namespace %s is not in watched list\n", ss.Name, ss.Namespace)
+				c.lastProcessedSS[key] = ss.Generation
+			}
+			continue
+		}
+
+		// Deduplicate based on generation
+		if gen, ok := c.lastProcessedSS[key]; ok && gen >= ss.Generation {
+			continue
+		}
+
+		// Deduplicate based on fingerprint
+		gitSha := ss.Annotations["valiant.io/git-sha"]
+		if gitSha == "" {
+			gitSha = ss.Annotations["kubernetes.io/change-cause"]
+		}
+		if gitSha != "" {
+			if lastSha, ok := c.lastProcessedSSSha[key]; ok && lastSha == gitSha {
+				fmt.Printf("Ignored rollout: statefulset %s generation changed but fingerprint %s is the same\n", key, gitSha)
+				c.lastProcessedSS[key] = ss.Generation
+				continue
+			}
+		}
+
+		// Intent Validation
+		source, exists := ss.Annotations["valiant.io/source"]
+		if c.requireAnnot {
+			if !exists || !c.isSourceAllowed(source) {
+				continue
+			}
+		}
+
+		// Completion Validation for StatefulSets:
+		// ReadyReplicas == Replicas && UpdatedReplicas == Replicas && CurrentRevision == UpdateRevision
+		if ss.Spec.Replicas == nil {
+			continue
+		}
+		desiredReplicas := *ss.Spec.Replicas
+		if ss.Status.ReadyReplicas != desiredReplicas ||
+			ss.Status.UpdatedReplicas != desiredReplicas ||
+			ss.Status.CurrentRevision != ss.Status.UpdateRevision {
+			continue
+		}
+
+		// Recency check: generation changed and rollout is complete
+		if _, ok := c.lastProcessedSS[key]; !ok {
+			// First time seeing this StatefulSet — record and skip
+			c.lastProcessedSS[key] = ss.Generation
+			if gitSha != "" {
+				c.lastProcessedSSSha[key] = gitSha
+			}
+			continue
+		}
+
+		// Timing
+		rolloutStartTime := ss.CreationTimestamp.Time
+		rolloutEndTime := time.Now()
+
+		image := ""
+		if len(ss.Spec.Template.Spec.Containers) > 0 {
+			image = ss.Spec.Template.Spec.Containers[0].Image
+		}
+
+		eventChan <- domain.ChangeEvent{
+			ID:               fmt.Sprintf("k8s-%s-%s-%d", ss.Namespace, ss.Name, ss.Generation),
+			Source:           "kubernetes",
+			TriggerType:      "GitOps",
+			ExecutionID:      fmt.Sprintf("%s-%d", ss.UID, ss.Generation),
+			ChangeType:       "statefulset_rollout",
+			Timestamp:        rolloutStartTime,
+			EndTime:          &rolloutEndTime,
+			AffectedServices: []string{ss.Name},
+			Summary:          fmt.Sprintf("StatefulSet %s rollout completed via %s", ss.Name, source),
+			Metadata: map[string]string{
+				"namespace":       ss.Namespace,
+				"kind":            "StatefulSet",
+				"generation":      fmt.Sprintf("%d", ss.Generation),
+				"image":           image,
+				"intent_source":   source,
+				"git_sha":         gitSha,
+				"update_revision": ss.Status.UpdateRevision,
+			},
+		}
+		c.lastProcessedSS[key] = ss.Generation
+		if gitSha != "" {
+			c.lastProcessedSSSha[key] = gitSha
+		}
+	}
+
 	if c.watchConfigMaps {
-		c.collectConfigMapChanges(ctx, eventChan, watchedNamespaces, allDepItems)
+		c.collectConfigMapChanges(ctx, eventChan, watchedNamespaces, allDepItems, allSSItems)
 	}
 	if c.watchSecrets {
-		c.collectSecretChanges(ctx, eventChan, watchedNamespaces, allDepItems)
+		c.collectSecretChanges(ctx, eventChan, watchedNamespaces, allDepItems, allSSItems)
 	}
 }
 func isRecentRollout(d *appsv1.Deployment) bool {
@@ -261,6 +410,16 @@ func isRecentRollout(d *appsv1.Deployment) bool {
 		}
 	}
 	return false
+}
+
+func isRecentStatefulSetRollout(ss *appsv1.StatefulSet) bool {
+	if ss.Spec.Replicas == nil {
+		return false
+	}
+	desired := *ss.Spec.Replicas
+	return ss.Status.ReadyReplicas == desired &&
+		ss.Status.UpdatedReplicas == desired &&
+		ss.Status.CurrentRevision == ss.Status.UpdateRevision
 }
 
 func (c *KubernetesCollector) isSourceAllowed(source string) bool {
@@ -316,9 +475,26 @@ func findReferencingDeployments(deps []appsv1.Deployment, name, kind string) []s
 	return result
 }
 
-func referencesResource(d appsv1.Deployment, name, kind string) bool {
-	podSpec := d.Spec.Template.Spec
+func findReferencingWorkloads(deps []appsv1.Deployment, ssets []appsv1.StatefulSet, name, kind string) WorkloadReferences {
+	refs := WorkloadReferences{}
+	for _, d := range deps {
+		if referencesResourceInPodSpec(d.Spec.Template.Spec, name, kind) {
+			refs.Deployments = append(refs.Deployments, d.Name)
+		}
+	}
+	for _, ss := range ssets {
+		if referencesResourceInPodSpec(ss.Spec.Template.Spec, name, kind) {
+			refs.StatefulSets = append(refs.StatefulSets, ss.Name)
+		}
+	}
+	return refs
+}
 
+func referencesResource(d appsv1.Deployment, name, kind string) bool {
+	return referencesResourceInPodSpec(d.Spec.Template.Spec, name, kind)
+}
+
+func referencesResourceInPodSpec(podSpec corev1.PodSpec, name, kind string) bool {
 	// Check envFrom
 	for _, c := range podSpec.Containers {
 		for _, ef := range c.EnvFrom {
@@ -388,7 +564,7 @@ func (c *KubernetesCollector) listConfigMaps(ctx context.Context, watchedNamespa
 	return items
 }
 
-func (c *KubernetesCollector) collectConfigMapChanges(ctx context.Context, eventChan chan<- domain.ChangeEvent, watchedNamespaces map[string]bool, deps []appsv1.Deployment) {
+func (c *KubernetesCollector) collectConfigMapChanges(ctx context.Context, eventChan chan<- domain.ChangeEvent, watchedNamespaces map[string]bool, deps []appsv1.Deployment, ssets []appsv1.StatefulSet) {
 	cmItems := c.listConfigMaps(ctx, watchedNamespaces)
 
 	for _, cm := range cmItems {
@@ -422,13 +598,24 @@ func (c *KubernetesCollector) collectConfigMapChanges(ctx context.Context, event
 		}
 
 		// Data changed — emit event
-		affectedServices := findReferencingDeployments(deps, cm.Name, "ConfigMap")
+		refs := findReferencingWorkloads(deps, ssets, cm.Name, "ConfigMap")
+		affectedServices := append(refs.Deployments, refs.StatefulSets...)
 
 		dataKeys := make([]string, 0, len(cm.Data))
 		for k := range cm.Data {
 			dataKeys = append(dataKeys, k)
 		}
 		sort.Strings(dataKeys)
+
+		var blastRadius *domain.BlastRadius
+		totalWorkloads := len(refs.Deployments) + len(refs.StatefulSets)
+		if totalWorkloads > 0 {
+			blastRadius = &domain.BlastRadius{
+				TotalWorkloads:       totalWorkloads,
+				AffectedDeployments:  refs.Deployments,
+				AffectedStatefulSets: refs.StatefulSets,
+			}
+		}
 
 		eventChan <- domain.ChangeEvent{
 			ID:               fmt.Sprintf("k8s-cm-%s-%s-%s", cm.Namespace, cm.Name, hash[:8]),
@@ -437,14 +624,17 @@ func (c *KubernetesCollector) collectConfigMapChanges(ctx context.Context, event
 			ChangeType:       "configmap_update",
 			Timestamp:        time.Now(),
 			AffectedServices: affectedServices,
+			BlastRadius:      blastRadius,
 			Summary:          fmt.Sprintf("ConfigMap %s/%s data changed", cm.Namespace, cm.Name),
 			Metadata: map[string]string{
-				"namespace":                cm.Namespace,
-				"kind":                     "ConfigMap",
-				"data_keys":               strings.Join(dataKeys, ","),
-				"data_hash":               hash[:8],
-				"intent_source":           cm.Annotations["valiant.io/source"],
-				"referencing_deployments": strings.Join(affectedServices, ","),
+				"namespace":                 cm.Namespace,
+				"kind":                      "ConfigMap",
+				"data_keys":                strings.Join(dataKeys, ","),
+				"data_hash":                hash[:8],
+				"intent_source":            cm.Annotations["valiant.io/source"],
+				"referencing_deployments":  strings.Join(refs.Deployments, ","),
+				"referencing_statefulsets": strings.Join(refs.StatefulSets, ","),
+				"blast_radius":            fmt.Sprintf("%d", totalWorkloads),
 			},
 		}
 	}
@@ -482,7 +672,7 @@ func (c *KubernetesCollector) listSecrets(ctx context.Context, watchedNamespaces
 	return items
 }
 
-func (c *KubernetesCollector) collectSecretChanges(ctx context.Context, eventChan chan<- domain.ChangeEvent, watchedNamespaces map[string]bool, deps []appsv1.Deployment) {
+func (c *KubernetesCollector) collectSecretChanges(ctx context.Context, eventChan chan<- domain.ChangeEvent, watchedNamespaces map[string]bool, deps []appsv1.Deployment, ssets []appsv1.StatefulSet) {
 	secretItems := c.listSecrets(ctx, watchedNamespaces)
 
 	for _, s := range secretItems {
@@ -521,13 +711,24 @@ func (c *KubernetesCollector) collectSecretChanges(ctx context.Context, eventCha
 		}
 
 		// Data changed — emit event
-		affectedServices := findReferencingDeployments(deps, s.Name, "Secret")
+		refs := findReferencingWorkloads(deps, ssets, s.Name, "Secret")
+		affectedServices := append(refs.Deployments, refs.StatefulSets...)
 
 		dataKeys := make([]string, 0, len(s.Data))
 		for k := range s.Data {
 			dataKeys = append(dataKeys, k)
 		}
 		sort.Strings(dataKeys)
+
+		var blastRadius *domain.BlastRadius
+		totalWorkloads := len(refs.Deployments) + len(refs.StatefulSets)
+		if totalWorkloads > 0 {
+			blastRadius = &domain.BlastRadius{
+				TotalWorkloads:       totalWorkloads,
+				AffectedDeployments:  refs.Deployments,
+				AffectedStatefulSets: refs.StatefulSets,
+			}
+		}
 
 		eventChan <- domain.ChangeEvent{
 			ID:               fmt.Sprintf("k8s-secret-%s-%s-%s", s.Namespace, s.Name, hash[:8]),
@@ -536,13 +737,16 @@ func (c *KubernetesCollector) collectSecretChanges(ctx context.Context, eventCha
 			ChangeType:       "secret_update",
 			Timestamp:        time.Now(),
 			AffectedServices: affectedServices,
+			BlastRadius:      blastRadius,
 			Summary:          fmt.Sprintf("Secret %s/%s data changed", s.Namespace, s.Name),
 			Metadata: map[string]string{
-				"namespace":                s.Namespace,
-				"kind":                     "Secret",
-				"data_keys":               strings.Join(dataKeys, ","),
-				"intent_source":           s.Annotations["valiant.io/source"],
-				"referencing_deployments": strings.Join(affectedServices, ","),
+				"namespace":                 s.Namespace,
+				"kind":                      "Secret",
+				"data_keys":                strings.Join(dataKeys, ","),
+				"intent_source":            s.Annotations["valiant.io/source"],
+				"referencing_deployments":  strings.Join(refs.Deployments, ","),
+				"referencing_statefulsets": strings.Join(refs.StatefulSets, ","),
+				"blast_radius":            fmt.Sprintf("%d", totalWorkloads),
 			},
 		}
 	}

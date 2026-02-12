@@ -37,6 +37,7 @@ func (router *Router) Handler() http.Handler {
 	})
 
 	mux.HandleFunc("/api/v1/events", router.handleEvents)
+	mux.HandleFunc("/api/v1/events/", router.handleEventLinks)
 	mux.HandleFunc("/api/v1/services", router.handleServices)
 	mux.HandleFunc("/api/v1/services/", router.handleServicePreferences)
 	mux.HandleFunc("/api/v1/analyze", router.handleAnalysis)
@@ -260,6 +261,38 @@ func (router *Router) handleEvents(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusMethodNotAllowed)
+}
+
+func (router *Router) handleEventLinks(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Parse event ID from path: /api/v1/events/{id}/links
+	path := strings.TrimPrefix(r.URL.Path, "/api/v1/events/")
+	parts := strings.SplitN(path, "/", 2)
+	if len(parts) < 2 || parts[1] != "links" || parts[0] == "" {
+		http.Error(w, "Not found", http.StatusNotFound)
+		return
+	}
+	eventID := parts[0]
+
+	links, err := router.storage.GetEventLinksByEventID(r.Context(), eventID)
+	if err != nil {
+		http.Error(w, "Failed to fetch event links", http.StatusInternalServerError)
+		return
+	}
+
+	if links == nil {
+		links = []domain.EventLink{}
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"event_id": eventID,
+		"links":    links,
+		"total":    len(links),
+	})
 }
 
 func (router *Router) handleAnalysis(w http.ResponseWriter, r *http.Request) {

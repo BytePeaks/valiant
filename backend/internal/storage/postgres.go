@@ -107,8 +107,8 @@ func (s *PostgresStorage) SaveChangeEvent(ctx context.Context, event domain.Chan
 	}
 
 	query := `
-		INSERT INTO change_events (id, source, trigger_type, execution_id, change_type, timestamp, end_time, affected_services, metadata, summary, status, invalid_reason, skew_seconds)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+		INSERT INTO change_events (id, source, trigger_type, execution_id, change_type, timestamp, end_time, affected_services, metadata, summary, status, invalid_reason, skew_seconds, blast_radius)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 		ON CONFLICT (id) DO UPDATE SET
 			source = EXCLUDED.source,
 			trigger_type = EXCLUDED.trigger_type,
@@ -121,12 +121,21 @@ func (s *PostgresStorage) SaveChangeEvent(ctx context.Context, event domain.Chan
 			summary = EXCLUDED.summary,
 			status = EXCLUDED.status,
 			invalid_reason = EXCLUDED.invalid_reason,
-			skew_seconds = EXCLUDED.skew_seconds
+			skew_seconds = EXCLUDED.skew_seconds,
+			blast_radius = EXCLUDED.blast_radius
 	`
 
 	metadataJSON, err := json.Marshal(event.Metadata)
 	if err != nil {
 		return fmt.Errorf("failed to marshal metadata: %w", err)
+	}
+
+	var blastRadiusJSON []byte
+	if event.BlastRadius != nil {
+		blastRadiusJSON, err = json.Marshal(event.BlastRadius)
+		if err != nil {
+			return fmt.Errorf("failed to marshal blast_radius: %w", err)
+		}
 	}
 
 	_, err = s.db.ExecContext(ctx, query,
@@ -143,6 +152,7 @@ func (s *PostgresStorage) SaveChangeEvent(ctx context.Context, event domain.Chan
 		event.Status,
 		sql.NullString{String: event.InvalidReason, Valid: event.InvalidReason != ""},
 		sql.NullInt32{Int32: int32(event.SkewSeconds), Valid: event.SkewSeconds != 0},
+		blastRadiusJSON,
 	)
 
 	if err != nil {
@@ -282,7 +292,7 @@ func (s *PostgresStorage) GetChangeEvents(ctx context.Context, filters map[strin
 	}
 
 	selectQuery := `
-		SELECT id, source, trigger_type, execution_id, change_type, timestamp, end_time, affected_services, metadata, summary, status, invalid_reason, skew_seconds
+		SELECT id, source, trigger_type, execution_id, change_type, timestamp, end_time, affected_services, metadata, summary, status, invalid_reason, skew_seconds, blast_radius
 		FROM change_events` + whereSQL + fmt.Sprintf(`
 		ORDER BY timestamp DESC
 		LIMIT %d OFFSET %d`, limit, offset)
@@ -301,6 +311,7 @@ func (s *PostgresStorage) GetChangeEvents(ctx context.Context, filters map[strin
 		var triggerType, executionID, status, invalidReason sql.NullString
 		var endTime sql.NullTime
 		var skewSeconds sql.NullInt32
+		var blastRadiusJSON sql.NullString
 
 		err := rows.Scan(
 			&event.ID,
@@ -316,6 +327,7 @@ func (s *PostgresStorage) GetChangeEvents(ctx context.Context, filters map[strin
 			&status,
 			&invalidReason,
 			&skewSeconds,
+			&blastRadiusJSON,
 		)
 		if err != nil {
 			return nil, 0, fmt.Errorf("failed to scan change event: %w", err)
@@ -335,6 +347,13 @@ func (s *PostgresStorage) GetChangeEvents(ctx context.Context, filters map[strin
 		event.AffectedServices = []string(affectedServices)
 		if err := json.Unmarshal(metadataJSON, &event.Metadata); err != nil {
 			return nil, 0, fmt.Errorf("failed to unmarshal metadata: %w", err)
+		}
+
+		if blastRadiusJSON.Valid && blastRadiusJSON.String != "" {
+			var br domain.BlastRadius
+			if err := json.Unmarshal([]byte(blastRadiusJSON.String), &br); err == nil {
+				event.BlastRadius = &br
+			}
 		}
 
 		events = append(events, event)
@@ -358,7 +377,7 @@ func (s *PostgresStorage) DeleteChangeEventsOlderThan(ctx context.Context, cutof
 
 func (s *PostgresStorage) GetChangeEventByID(ctx context.Context, id string) (domain.ChangeEvent, error) {
 	query := `
-		SELECT id, source, trigger_type, execution_id, change_type, timestamp, end_time, affected_services, metadata, summary, status, invalid_reason, skew_seconds
+		SELECT id, source, trigger_type, execution_id, change_type, timestamp, end_time, affected_services, metadata, summary, status, invalid_reason, skew_seconds, blast_radius
 		FROM change_events
 		WHERE id = $1
 	`
@@ -369,6 +388,7 @@ func (s *PostgresStorage) GetChangeEventByID(ctx context.Context, id string) (do
 	var triggerType, executionID, status, invalidReason sql.NullString
 	var endTime sql.NullTime
 	var skewSeconds sql.NullInt32
+	var blastRadiusJSON sql.NullString
 
 	err := s.db.QueryRowContext(ctx, query, id).Scan(
 		&event.ID,
@@ -384,6 +404,7 @@ func (s *PostgresStorage) GetChangeEventByID(ctx context.Context, id string) (do
 		&status,
 		&invalidReason,
 		&skewSeconds,
+		&blastRadiusJSON,
 	)
 
 	if err == sql.ErrNoRows {
@@ -407,6 +428,13 @@ func (s *PostgresStorage) GetChangeEventByID(ctx context.Context, id string) (do
 	event.AffectedServices = []string(affectedServices)
 	if err := json.Unmarshal(metadataJSON, &event.Metadata); err != nil {
 		return domain.ChangeEvent{}, fmt.Errorf("failed to unmarshal metadata: %w", err)
+	}
+
+	if blastRadiusJSON.Valid && blastRadiusJSON.String != "" {
+		var br domain.BlastRadius
+		if err := json.Unmarshal([]byte(blastRadiusJSON.String), &br); err == nil {
+			event.BlastRadius = &br
+		}
 	}
 
 	event.ContextualLinks = s.generateContextualLinks(event)
@@ -441,7 +469,7 @@ func (s *PostgresStorage) GetServices(ctx context.Context) ([]string, error) {
 
 func (s *PostgresStorage) GetEventsPendingAnalysis(ctx context.Context) ([]domain.ChangeEvent, error) {
 	query := `
-		SELECT e.id, e.source, e.trigger_type, e.execution_id, e.change_type, e.timestamp, e.end_time, e.affected_services, e.metadata, e.summary
+		SELECT e.id, e.source, e.trigger_type, e.execution_id, e.change_type, e.timestamp, e.end_time, e.affected_services, e.metadata, e.summary, e.blast_radius
 		FROM change_events e
 		LEFT JOIN impact_analysis_snapshots s ON e.id = s.event_id
 		WHERE s.event_id IS NULL AND e.status = 'ready'
@@ -462,6 +490,7 @@ func (s *PostgresStorage) GetEventsPendingAnalysis(ctx context.Context) ([]domai
 		var affectedServices pq.StringArray
 		var triggerType, executionID sql.NullString
 		var endTime sql.NullTime
+		var blastRadiusJSON sql.NullString
 
 		err := rows.Scan(
 			&event.ID,
@@ -474,6 +503,7 @@ func (s *PostgresStorage) GetEventsPendingAnalysis(ctx context.Context) ([]domai
 			&affectedServices,
 			&metadataJSON,
 			&event.Summary,
+			&blastRadiusJSON,
 		)
 		if err != nil {
 			return nil, err
@@ -487,6 +517,14 @@ func (s *PostgresStorage) GetEventsPendingAnalysis(ctx context.Context) ([]domai
 		}
 		event.AffectedServices = []string(affectedServices)
 		json.Unmarshal(metadataJSON, &event.Metadata)
+
+		if blastRadiusJSON.Valid && blastRadiusJSON.String != "" {
+			var br domain.BlastRadius
+			if err := json.Unmarshal([]byte(blastRadiusJSON.String), &br); err == nil {
+				event.BlastRadius = &br
+			}
+		}
+
 		event.ContextualLinks = s.generateContextualLinks(event)
 		events = append(events, event)
 	}
@@ -644,4 +682,208 @@ func (s *PostgresStorage) GetNamespaces(ctx context.Context) ([]string, error) {
 	}
 
 	return namespaces, nil
+}
+
+// SaveEventLink persists an event link with upsert semantics.
+func (s *PostgresStorage) SaveEventLink(ctx context.Context, link domain.EventLink) error {
+	query := `
+		INSERT INTO event_links (id, intent_event_id, execution_event_id, link_type, confidence, created_at, metadata)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		ON CONFLICT (intent_event_id, execution_event_id, link_type) DO UPDATE SET
+			confidence = EXCLUDED.confidence,
+			metadata = EXCLUDED.metadata
+	`
+
+	metadataJSON, err := json.Marshal(link.Metadata)
+	if err != nil {
+		return fmt.Errorf("failed to marshal link metadata: %w", err)
+	}
+
+	_, err = s.db.ExecContext(ctx, query,
+		link.ID,
+		link.IntentEventID,
+		link.ExecutionEventID,
+		link.LinkType,
+		link.Confidence,
+		link.CreatedAt,
+		metadataJSON,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to save event link: %w", err)
+	}
+
+	return nil
+}
+
+// GetEventLinksByEventID returns all links where the given event is either intent or execution.
+func (s *PostgresStorage) GetEventLinksByEventID(ctx context.Context, eventID string) ([]domain.EventLink, error) {
+	query := `
+		SELECT id, intent_event_id, execution_event_id, link_type, confidence, created_at, metadata
+		FROM event_links
+		WHERE intent_event_id = $1 OR execution_event_id = $1
+		ORDER BY confidence DESC, created_at DESC
+	`
+
+	rows, err := s.db.QueryContext(ctx, query, eventID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query event links: %w", err)
+	}
+	defer rows.Close()
+
+	var links []domain.EventLink
+	for rows.Next() {
+		var link domain.EventLink
+		var metadataJSON []byte
+
+		err := rows.Scan(
+			&link.ID,
+			&link.IntentEventID,
+			&link.ExecutionEventID,
+			&link.LinkType,
+			&link.Confidence,
+			&link.CreatedAt,
+			&metadataJSON,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan event link: %w", err)
+		}
+
+		if len(metadataJSON) > 0 {
+			json.Unmarshal(metadataJSON, &link.Metadata)
+		}
+		if link.Metadata == nil {
+			link.Metadata = make(map[string]string)
+		}
+
+		links = append(links, link)
+	}
+
+	return links, nil
+}
+
+// GetEventLinksByExecutionID returns all links for a specific execution event.
+func (s *PostgresStorage) GetEventLinksByExecutionID(ctx context.Context, executionEventID string) ([]domain.EventLink, error) {
+	query := `
+		SELECT id, intent_event_id, execution_event_id, link_type, confidence, created_at, metadata
+		FROM event_links
+		WHERE execution_event_id = $1
+		ORDER BY confidence DESC, created_at DESC
+	`
+
+	rows, err := s.db.QueryContext(ctx, query, executionEventID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query event links by execution: %w", err)
+	}
+	defer rows.Close()
+
+	var links []domain.EventLink
+	for rows.Next() {
+		var link domain.EventLink
+		var metadataJSON []byte
+
+		err := rows.Scan(
+			&link.ID,
+			&link.IntentEventID,
+			&link.ExecutionEventID,
+			&link.LinkType,
+			&link.Confidence,
+			&link.CreatedAt,
+			&metadataJSON,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan event link: %w", err)
+		}
+
+		if len(metadataJSON) > 0 {
+			json.Unmarshal(metadataJSON, &link.Metadata)
+		}
+		if link.Metadata == nil {
+			link.Metadata = make(map[string]string)
+		}
+
+		links = append(links, link)
+	}
+
+	return links, nil
+}
+
+// GetRecentConfigChangeEvents returns config change events affecting a service within a time window.
+func (s *PostgresStorage) GetRecentConfigChangeEvents(ctx context.Context, service string, before time.Time, within time.Duration) ([]domain.ChangeEvent, error) {
+	windowStart := before.Add(-within)
+
+	query := `
+		SELECT id, source, trigger_type, execution_id, change_type, timestamp, end_time, affected_services, metadata, summary, status, invalid_reason, skew_seconds, blast_radius
+		FROM change_events
+		WHERE change_type IN ('configmap_update', 'secret_update')
+		  AND affected_services && $1
+		  AND timestamp >= $2
+		  AND timestamp <= $3
+		ORDER BY timestamp DESC
+	`
+
+	rows, err := s.db.QueryContext(ctx, query, pq.Array([]string{service}), windowStart, before)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query recent config changes: %w", err)
+	}
+	defer rows.Close()
+
+	var events []domain.ChangeEvent
+	for rows.Next() {
+		var event domain.ChangeEvent
+		var metadataJSON []byte
+		var affectedServices pq.StringArray
+		var triggerType, executionID, status, invalidReason sql.NullString
+		var endTime sql.NullTime
+		var skewSeconds sql.NullInt32
+		var blastRadiusJSON sql.NullString
+
+		err := rows.Scan(
+			&event.ID,
+			&event.Source,
+			&triggerType,
+			&executionID,
+			&event.ChangeType,
+			&event.Timestamp,
+			&endTime,
+			&affectedServices,
+			&metadataJSON,
+			&event.Summary,
+			&status,
+			&invalidReason,
+			&skewSeconds,
+			&blastRadiusJSON,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan config change event: %w", err)
+		}
+
+		event.TriggerType = triggerType.String
+		event.ExecutionID = executionID.String
+		if endTime.Valid {
+			t := endTime.Time
+			event.EndTime = &t
+		}
+		event.Status = status.String
+		event.InvalidReason = invalidReason.String
+		event.SkewSeconds = int(skewSeconds.Int32)
+		event.AffectedServices = []string(affectedServices)
+
+		if len(metadataJSON) > 0 {
+			json.Unmarshal(metadataJSON, &event.Metadata)
+		}
+		if event.Metadata == nil {
+			event.Metadata = make(map[string]string)
+		}
+
+		if blastRadiusJSON.Valid && blastRadiusJSON.String != "" {
+			var br domain.BlastRadius
+			if err := json.Unmarshal([]byte(blastRadiusJSON.String), &br); err == nil {
+				event.BlastRadius = &br
+			}
+		}
+
+		events = append(events, event)
+	}
+
+	return events, nil
 }

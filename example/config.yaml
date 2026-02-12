@@ -101,6 +101,10 @@ analysis:
   # If no intent event is found within this window, the execution event is marked as orphaned.
   intent_execution_correlation_window: "1h"
 
+  # Max time between a ConfigMap/Secret change and a subsequent rollout
+  # for Valiant to consider the config change as a causal trigger.
+  config_trigger_window: "15m"
+
   # Metric Weights
   # --------------
   # Define the relative importance of each metric in the impact score calculation.

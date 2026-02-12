@@ -4,11 +4,14 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"strconv"
 	"time"
 	"valiant/internal/config"
 	"valiant/internal/domain"
 	"valiant/internal/metrics"
 	"valiant/internal/storage"
+
+	"github.com/google/uuid"
 )
 
 const (
@@ -51,36 +54,41 @@ func (e *Engine) AnalyzeImpact(ctx context.Context, event domain.ChangeEvent) (d
 		ChangeEvent: event,
 	}
 
-	// 2. Intent/Execution Linking (formerly Orphan Detection)
-	isExecutionEvent := event.TriggerType == "GitOps" || event.TriggerType == "manual"
-	if isExecutionEvent && (event.Metadata["git_commit_sha"] != "" || event.Metadata["image_tag"] != "") {
-		// This is an execution event with linking metadata. Look for a corresponding CI event.
-		from := event.Timestamp.Add(-e.config.Analysis.IntentExecutionCorrelationDur)
-		to := event.Timestamp
-		
-		metadataToLink := make(map[string]string)
-		if sha, ok := event.Metadata["git_commit_sha"]; ok && sha != "" {
-			metadataToLink["git_commit_sha"] = sha
-		}
-		if tag, ok := event.Metadata["image_tag"]; ok && tag != "" {
-			metadataToLink["image_tag"] = tag
-		}
+	// 2. Intent/Execution Linking - creates persistent links and determines orphan status
+	var allLinks []domain.EventLink
 
-		ciEvents, _, err := e.storage.GetChangeEvents(ctx, map[string]interface{}{
-			"trigger_type":     "CI",
-			"from_timestamp":   from,
-			"to_timestamp":     to,
-			"metadata_has_any": metadataToLink,
-		})
-		if err != nil {
-			return domain.ImpactAnalysis{}, fmt.Errorf("failed to check for corresponding CI event: %w", err)
+	// Create intent-execution links (SHA/tag matches to CI events)
+	intentLinks, err := e.CreateIntentExecutionLinks(ctx, event)
+	if err != nil {
+		return domain.ImpactAnalysis{}, fmt.Errorf("failed to create intent-execution links: %w", err)
+	}
+	allLinks = append(allLinks, intentLinks...)
+
+	// Create config trigger links (config changes before rollouts)
+	configLinks, err := e.CreateConfigTriggerLinks(ctx, event)
+	if err != nil {
+		return domain.ImpactAnalysis{}, fmt.Errorf("failed to create config trigger links: %w", err)
+	}
+	allLinks = append(allLinks, configLinks...)
+
+	analysis.Links = allLinks
+
+	// Backwards-compatible orphan detection: orphaned if no intent-execution links exist
+	isExecutionEvent := event.TriggerType == "GitOps" || event.TriggerType == "manual"
+	if isExecutionEvent {
+		hasIntentLink := false
+		for _, link := range intentLinks {
+			if link.LinkType == "sha_match" || link.LinkType == "image_tag_match" {
+				hasIntentLink = true
+				break
+			}
 		}
-		if len(ciEvents) == 0 {
-			analysis.IsOrphaned = true
-		}
-	} else if isExecutionEvent {
-		// Fallback for execution events without linking metadata
-		analysis.IsOrphaned = true
+		analysis.IsOrphaned = !hasIntentLink
+	}
+
+	// Populate blast radius from the event if present
+	if event.BlastRadius != nil {
+		analysis.BlastRadius = event.BlastRadius
 	}
 
 	// 3. Define time windows relative to the change event using Config
@@ -148,16 +156,218 @@ func (e *Engine) AnalyzeImpact(ctx context.Context, event domain.ChangeEvent) (d
 	return analysis, nil
 }
 
+// CreateIntentExecutionLinks creates persistent links between execution events and CI events
+// based on git_commit_sha and image_tag metadata matches.
+func (e *Engine) CreateIntentExecutionLinks(ctx context.Context, event domain.ChangeEvent) ([]domain.EventLink, error) {
+	// Only process execution events (GitOps or manual deployments)
+	isExecutionEvent := event.TriggerType == "GitOps" || event.TriggerType == "manual"
+	if !isExecutionEvent {
+		return nil, nil
+	}
+
+	// Check if links already exist (idempotent)
+	existingLinks, err := e.storage.GetEventLinksByExecutionID(ctx, event.ID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to check existing links: %w", err)
+	}
+
+	// Filter for SHA/tag links
+	var intentLinks []domain.EventLink
+	for _, link := range existingLinks {
+		if link.LinkType == "sha_match" || link.LinkType == "image_tag_match" {
+			intentLinks = append(intentLinks, link)
+		}
+	}
+	if len(intentLinks) > 0 {
+		return intentLinks, nil
+	}
+
+	// Build metadata to search for
+	metadataToLink := make(map[string]string)
+	if sha, ok := event.Metadata["git_commit_sha"]; ok && sha != "" {
+		metadataToLink["git_commit_sha"] = sha
+	}
+	if tag, ok := event.Metadata["image_tag"]; ok && tag != "" {
+		metadataToLink["image_tag"] = tag
+	}
+
+	if len(metadataToLink) == 0 {
+		return nil, nil // No linking metadata available
+	}
+
+	// Search for CI events within correlation window
+	from := event.Timestamp.Add(-e.config.Analysis.IntentExecutionCorrelationDur)
+	to := event.Timestamp
+
+	ciEvents, _, err := e.storage.GetChangeEvents(ctx, map[string]interface{}{
+		"trigger_type":     "CI",
+		"from_timestamp":   from,
+		"to_timestamp":     to,
+		"metadata_has_any": metadataToLink,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to search for CI events: %w", err)
+	}
+
+	// Create links for matching CI events
+	var links []domain.EventLink
+	now := time.Now().UTC()
+
+	for _, ciEvent := range ciEvents {
+		// Check for SHA match
+		if sha, ok := event.Metadata["git_commit_sha"]; ok && sha != "" {
+			if ciSha, ok := ciEvent.Metadata["git_commit_sha"]; ok && ciSha == sha {
+				link := domain.EventLink{
+					ID:               uuid.New().String(),
+					IntentEventID:    ciEvent.ID,
+					ExecutionEventID: event.ID,
+					LinkType:         "sha_match",
+					Confidence:       1.0,
+					CreatedAt:        now,
+					Metadata: map[string]string{
+						"git_commit_sha": sha,
+					},
+				}
+				if err := e.storage.SaveEventLink(ctx, link); err != nil {
+					return nil, fmt.Errorf("failed to save SHA link: %w", err)
+				}
+				links = append(links, link)
+			}
+		}
+
+		// Check for image tag match (separate link)
+		if tag, ok := event.Metadata["image_tag"]; ok && tag != "" {
+			if ciTag, ok := ciEvent.Metadata["image_tag"]; ok && ciTag == tag {
+				// Avoid duplicate link if same CI event already linked by SHA
+				alreadyLinked := false
+				for _, existing := range links {
+					if existing.IntentEventID == ciEvent.ID {
+						alreadyLinked = true
+						break
+					}
+				}
+				if !alreadyLinked {
+					link := domain.EventLink{
+						ID:               uuid.New().String(),
+						IntentEventID:    ciEvent.ID,
+						ExecutionEventID: event.ID,
+						LinkType:         "image_tag_match",
+						Confidence:       0.9,
+						CreatedAt:        now,
+						Metadata: map[string]string{
+							"image_tag": tag,
+						},
+					}
+					if err := e.storage.SaveEventLink(ctx, link); err != nil {
+						return nil, fmt.Errorf("failed to save tag link: %w", err)
+					}
+					links = append(links, link)
+				}
+			}
+		}
+	}
+
+	return links, nil
+}
+
+// CreateConfigTriggerLinks creates links between deployment/statefulset rollouts and
+// recent ConfigMap/Secret changes that may have triggered the rollout.
+func (e *Engine) CreateConfigTriggerLinks(ctx context.Context, event domain.ChangeEvent) ([]domain.EventLink, error) {
+	// Only process rollout events
+	if event.ChangeType != "deployment_rollout" && event.ChangeType != "statefulset_rollout" {
+		return nil, nil
+	}
+
+	// Check if config trigger links already exist
+	existingLinks, err := e.storage.GetEventLinksByExecutionID(ctx, event.ID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to check existing config links: %w", err)
+	}
+
+	var configLinks []domain.EventLink
+	for _, link := range existingLinks {
+		if link.LinkType == "config_trigger" {
+			configLinks = append(configLinks, link)
+		}
+	}
+	if len(configLinks) > 0 {
+		return configLinks, nil
+	}
+
+	// Search for config changes before the rollout timestamp
+	configTriggerDur := e.config.Analysis.ConfigTriggerDur
+	if configTriggerDur == 0 {
+		configTriggerDur = 15 * time.Minute // Default fallback
+	}
+
+	// Deduplicate config events by ID (most recent per resource)
+	seenConfigEvents := make(map[string]domain.ChangeEvent)
+
+	for _, service := range event.AffectedServices {
+		configEvents, err := e.storage.GetRecentConfigChangeEvents(ctx, service, event.Timestamp, configTriggerDur)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get recent config changes for %s: %w", service, err)
+		}
+
+		for _, configEvent := range configEvents {
+			// Keep only the most recent per event ID (already sorted by timestamp DESC)
+			if _, exists := seenConfigEvents[configEvent.ID]; !exists {
+				seenConfigEvents[configEvent.ID] = configEvent
+			}
+		}
+	}
+
+	// Create links with proximity-based confidence
+	var links []domain.EventLink
+	now := time.Now().UTC()
+
+	for _, configEvent := range seenConfigEvents {
+		// Calculate proximity ratio: 1.0 at rollout time, 0.0 at window edge
+		timeDelta := event.Timestamp.Sub(configEvent.Timestamp)
+		proximityRatio := 1.0 - (float64(timeDelta) / float64(configTriggerDur))
+		if proximityRatio < 0 {
+			proximityRatio = 0
+		}
+		if proximityRatio > 1 {
+			proximityRatio = 1
+		}
+
+		// Confidence = 0.7 + (0.2 * proximity)
+		confidence := 0.7 + (0.2 * proximityRatio)
+
+		link := domain.EventLink{
+			ID:               uuid.New().String(),
+			IntentEventID:    configEvent.ID,
+			ExecutionEventID: event.ID,
+			LinkType:         "config_trigger",
+			Confidence:       confidence,
+			CreatedAt:        now,
+			Metadata: map[string]string{
+				"config_event_type": configEvent.ChangeType,
+				"time_delta_sec":    strconv.FormatInt(int64(timeDelta.Seconds()), 10),
+			},
+		}
+
+		if err := e.storage.SaveEventLink(ctx, link); err != nil {
+			return nil, fmt.Errorf("failed to save config trigger link: %w", err)
+		}
+		links = append(links, link)
+	}
+
+	return links, nil
+}
+
 // changeTypeWeights maps change types to risk weights.
 // Full image deployments carry the highest risk; config changes are lower.
 var changeTypeWeights = map[string]float64{
-	"deployment_rollout": 1.0,
-	"build_success":      0.8,
-	"tag_created":         0.7,
-	"release_published":   0.7,
-	"branch_merged":       0.6,
-	"configmap_update":    0.5,
-	"secret_update":       0.5,
+	"deployment_rollout":   1.0,
+	"statefulset_rollout":  1.0,
+	"build_success":        0.8,
+	"tag_created":          0.7,
+	"release_published":    0.7,
+	"branch_merged":        0.6,
+	"configmap_update":     0.5,
+	"secret_update":        0.5,
 }
 
 // RankChanges ranks concurrent changes for a service within a time range

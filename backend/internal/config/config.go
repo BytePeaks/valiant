@@ -35,6 +35,8 @@ type AnalysisConfig struct {
 	ImpactDur                        time.Duration      `yaml:"-"`
 	IntentExecutionCorrelationWindow string             `yaml:"intent_execution_correlation_window"`
 	IntentExecutionCorrelationDur    time.Duration      `yaml:"-"`
+	ConfigTriggerWindow              string             `yaml:"config_trigger_window"` // Max time between config change and rollout for causality
+	ConfigTriggerDur                 time.Duration      `yaml:"-"`
 	WeightsBuiltIn                   map[string]float64 `yaml:"weights_built_in"`
 	WeightsCustom                    map[string]float64 `yaml:"weights_custom"`
 }
@@ -87,6 +89,7 @@ func Load(configPath string) (*Config, error) {
 	cfg.Analysis.BaselineWindow = "30m"
 	cfg.Analysis.ImpactWindow = "30m"
 	cfg.Analysis.IntentExecutionCorrelationWindow = "1h"
+	cfg.Analysis.ConfigTriggerWindow = "15m"
 	cfg.Analysis.WeightsBuiltIn = map[string]float64{
 		"error_rate":     0.4,
 		"latency_p95_ms": 0.3,
@@ -125,6 +128,11 @@ func Load(configPath string) (*Config, error) {
 	cfg.Analysis.IntentExecutionCorrelationDur, err = time.ParseDuration(cfg.Analysis.IntentExecutionCorrelationWindow)
 	if err != nil {
 		cfg.Analysis.IntentExecutionCorrelationDur = 1 * time.Hour
+	}
+
+	cfg.Analysis.ConfigTriggerDur, err = time.ParseDuration(cfg.Analysis.ConfigTriggerWindow)
+	if err != nil {
+		cfg.Analysis.ConfigTriggerDur = 15 * time.Minute
 	}
 
 	cfg.Retention.EventTTLDur, err = parseDuration(cfg.Retention.EventTTL)
