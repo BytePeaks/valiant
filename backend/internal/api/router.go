@@ -55,7 +55,8 @@ func (router *Router) handleServices(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	services, err := router.storage.GetServices(r.Context())
+	namespace := r.URL.Query().Get("namespace")
+	services, err := router.storage.GetServices(r.Context(), namespace)
 	if err != nil {
 		http.Error(w, "Failed to fetch services", http.StatusInternalServerError)
 		return

@@ -441,15 +441,28 @@ func (s *PostgresStorage) GetChangeEventByID(ctx context.Context, id string) (do
 
 	return event, nil
 }
-func (s *PostgresStorage) GetServices(ctx context.Context) ([]string, error) {
-	query := `
-		SELECT DISTINCT unnest(affected_services) as service
-		FROM change_events
-		WHERE affected_services IS NOT NULL
-		ORDER BY service ASC
-	`
+func (s *PostgresStorage) GetServices(ctx context.Context, namespace string) ([]string, error) {
+	var query string
+	var args []interface{}
 
-	rows, err := s.db.QueryContext(ctx, query)
+	if namespace != "" {
+		query = `
+			SELECT DISTINCT unnest(affected_services) as service
+			FROM change_events
+			WHERE affected_services IS NOT NULL AND metadata ->> 'env' = $1
+			ORDER BY service ASC
+		`
+		args = append(args, namespace)
+	} else {
+		query = `
+			SELECT DISTINCT unnest(affected_services) as service
+			FROM change_events
+			WHERE affected_services IS NOT NULL
+			ORDER BY service ASC
+		`
+	}
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get services: %w", err)
 	}

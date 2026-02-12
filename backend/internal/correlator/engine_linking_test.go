@@ -61,7 +61,7 @@ func (m *LinkingMockStorage) DeleteChangeEventsOlderThan(ctx context.Context, cu
 func (m *LinkingMockStorage) GetChangeEventByID(ctx context.Context, id string) (domain.ChangeEvent, error) {
 	return domain.ChangeEvent{}, nil
 }
-func (m *LinkingMockStorage) GetServices(ctx context.Context) ([]string, error) { return nil, nil }
+func (m *LinkingMockStorage) GetServices(ctx context.Context, namespace string) ([]string, error) { return nil, nil }
 func (m *LinkingMockStorage) GetEventsPendingAnalysis(ctx context.Context) ([]domain.ChangeEvent, error) {
 	return nil, nil
 }

@@ -47,7 +47,6 @@ export interface EventFilters {
   offset?: number;
   service?: string;
   namespace?: string;
-  change_type?: string;
   from?: string;
   to?: string;
   search?: string;
@@ -110,8 +109,9 @@ export async function fetchChangeEvents(
   };
 }
 
-export async function fetchServices(): Promise<string[]> {
-  const res = await fetch(`${API_BASE_URL}/services`);
+export async function fetchServices(namespace?: string): Promise<string[]> {
+  const params = namespace ? `?namespace=${encodeURIComponent(namespace)}` : '';
+  const res = await fetch(`${API_BASE_URL}/services${params}`);
   if (!res.ok) {
     throw new Error('Failed to fetch services');
   }
