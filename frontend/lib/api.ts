@@ -5,6 +5,12 @@ export interface ContextualLink {
   url: string;
 }
 
+export interface BlastRadius {
+  total_workloads: number;
+  affected_deployments: string[];
+  affected_statefulsets: string[];
+}
+
 export interface ChangeEvent {
   id: string;
   source: string; // Deprecated in favor of trigger_type
@@ -23,6 +29,7 @@ export interface ChangeEvent {
   link_type?: string;                // "sha_match" or "image_tag_match"
   link_confidence?: number;          // 0.0 to 1.0
   link_reason?: string;              // Human-readable reason from link metadata
+  blast_radius?: BlastRadius;
 }
 
 export interface MetricValues {
