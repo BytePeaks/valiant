@@ -4,21 +4,19 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"sort"
+	"strconv"
+	"strings"
 	"time"
 	"valiant/internal/config"
 	"valiant/internal/domain"
 	"valiant/internal/metrics"
 	"valiant/internal/storage"
+
+	"github.com/google/uuid"
 )
 
 const (
-	// Metric Weights
-	weightErrorRate        = 0.4
-	weightLatencyP95       = 0.3
-	weightCPUSaturation    = 0.1
-	weightMemorySaturation = 0.1
-	weightRPS              = 0.1
-
 	// Impact Thresholds
 	thresholdHigh   = 0.7
 	thresholdMedium = 0.4
@@ -58,24 +56,57 @@ func (e *Engine) AnalyzeImpact(ctx context.Context, event domain.ChangeEvent) (d
 		ChangeEvent: event,
 	}
 
-	// 2. Orphan detection
-	isExecutionEvent := event.TriggerType == "GitOps" || event.TriggerType == "manual"
-	if isExecutionEvent {
-		// Look for a corresponding CI event in the correlation window
-		from := event.Timestamp.Add(-e.config.Analysis.OrphanCorrelationDur)
-		to := event.Timestamp
-		ciEvents, err := e.storage.GetChangeEvents(ctx, map[string]interface{}{
-			"trigger_type":    "CI",
-			"from_timestamp":  from,
-			"to_timestamp":    to,
-			"services_any_of": event.AffectedServices,
-		})
-		if err != nil {
-			return domain.ImpactAnalysis{}, fmt.Errorf("failed to check for orphan event: %w", err)
+	// 2. Intent/Execution Linking - creates persistent links and determines orphan status
+	var allLinks []domain.EventLink
+
+	// Create intent-execution links (SHA/tag matches to CI events)
+	intentLinks, err := e.CreateIntentExecutionLinks(ctx, event)
+	if err != nil {
+		return domain.ImpactAnalysis{}, fmt.Errorf("failed to create intent-execution links: %w", err)
+	}
+	allLinks = append(allLinks, intentLinks...)
+
+	// Create config trigger links (config changes before rollouts)
+	configLinks, err := e.CreateConfigTriggerLinks(ctx, event)
+	if err != nil {
+		return domain.ImpactAnalysis{}, fmt.Errorf("failed to create config trigger links: %w", err)
+	}
+	allLinks = append(allLinks, configLinks...)
+
+	analysis.Links = allLinks
+
+	// Populate LinkedCIEvent from intent links for convenience
+	if len(intentLinks) > 0 {
+		bestLink := intentLinks[0]
+		for _, link := range intentLinks[1:] {
+			if link.Confidence > bestLink.Confidence {
+				bestLink = link
+			}
 		}
-		if len(ciEvents) == 0 {
-			analysis.IsOrphaned = true
+		linkedEvent, err := e.storage.GetChangeEventByID(ctx, bestLink.IntentEventID)
+		if err == nil {
+			analysis.LinkedCIEvent = &linkedEvent
 		}
+	}
+
+	// Orphan detection: orphaned if no intent-execution links exist for execution events
+	if event.IsExecution {
+		hasIntentLink := false
+		for _, link := range intentLinks {
+			if link.LinkType == "sha_match" || link.LinkType == "image_tag_match" || link.LinkType == "image_sha_inferred" {
+				hasIntentLink = true
+				break
+			}
+		}
+		analysis.IsOrphaned = !hasIntentLink
+		if analysis.IsOrphaned {
+			fmt.Printf("Orphaned execution event %s: %s (no matching CI event found during analysis)\n", event.ID, event.Summary)
+		}
+	}
+
+	// Populate blast radius from the event if present
+	if event.BlastRadius != nil {
+		analysis.BlastRadius = event.BlastRadius
 	}
 
 	// 3. Define time windows relative to the change event using Config
@@ -119,7 +150,7 @@ func (e *Engine) AnalyzeImpact(ctx context.Context, event domain.ChangeEvent) (d
 	deltas := calculateDeltas(baselineMetrics, impactMetrics)
 
 	// 5. Normalize deltas into a 0-1 score and compute weighted sum.
-	impactScore := calculateImpactScore(deltas)
+	impactScore := calculateImpactScore(deltas, e.config.Analysis.WeightsBuiltIn, e.config.Analysis.WeightsCustom)
 
 	// 6. Classify impact level.
 	impactLevel := classifyImpactLevel(impactScore)
@@ -143,14 +174,624 @@ func (e *Engine) AnalyzeImpact(ctx context.Context, event domain.ChangeEvent) (d
 	return analysis, nil
 }
 
-func calculateDeltas(baseline, impact domain.MetricValues) domain.MetricValues {
-	return domain.MetricValues{
-		ErrorRate:        calculateDelta(baseline.ErrorRate, impact.ErrorRate),
-		LatencyP95:       calculateDelta(baseline.LatencyP95, impact.LatencyP95),
-		RPS:              calculateDelta(baseline.RPS, impact.RPS),
-		CPUSaturation:    calculateDelta(baseline.CPUSaturation, impact.CPUSaturation),
-		MemorySaturation: calculateDelta(baseline.MemorySaturation, impact.MemorySaturation),
+// CreateIntentExecutionLinks creates persistent links between execution events and CI events
+// based on git_commit_sha and image_tag metadata matches.
+func (e *Engine) CreateIntentExecutionLinks(ctx context.Context, event domain.ChangeEvent) ([]domain.EventLink, error) {
+	// Only process execution events
+	if !event.IsExecution {
+		return nil, nil
 	}
+
+	// Check if links already exist (idempotent)
+	existingLinks, err := e.storage.GetEventLinksByExecutionID(ctx, event.ID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to check existing links: %w", err)
+	}
+
+	// Filter for SHA/tag/inferred links
+	var intentLinks []domain.EventLink
+	for _, link := range existingLinks {
+		if link.LinkType == "sha_match" || link.LinkType == "image_tag_match" || link.LinkType == "image_sha_inferred" {
+			intentLinks = append(intentLinks, link)
+		}
+	}
+	if len(intentLinks) > 0 {
+		return intentLinks, nil
+	}
+
+	// Build metadata to search for
+	metadataToLink := make(map[string]string)
+	if sha, ok := event.Metadata["git_commit_sha"]; ok && sha != "" {
+		metadataToLink["git_commit_sha"] = sha
+	}
+	if tag, ok := event.Metadata["image_tag"]; ok && tag != "" {
+		metadataToLink["image_tag"] = tag
+	}
+
+	if len(metadataToLink) == 0 {
+		return nil, nil // No linking metadata available
+	}
+
+	// Search for intent events within correlation window
+	from := event.Timestamp.Add(-e.config.Analysis.IntentExecutionCorrelationDur)
+	to := event.Timestamp
+
+	ciEvents, _, err := e.storage.GetChangeEvents(ctx, map[string]interface{}{
+		"is_intent_only":   true,
+		"from_timestamp":   from,
+		"to_timestamp":     to,
+		"metadata_has_any": metadataToLink,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to search for intent events: %w", err)
+	}
+
+	// Collect matches per tier, then pick the closest in time for each tier
+	var links []domain.EventLink
+	now := time.Now().UTC()
+
+	// Tier 1: SHA match (confidence 1.0)
+	var shaMatches []domain.ChangeEvent
+	if sha, ok := event.Metadata["git_commit_sha"]; ok && sha != "" {
+		for _, ciEvent := range ciEvents {
+			if ciSha, ok := ciEvent.Metadata["git_commit_sha"]; ok && ciSha == sha {
+				shaMatches = append(shaMatches, ciEvent)
+			}
+		}
+	}
+	if len(shaMatches) > 1 {
+		sortByClosest(shaMatches, event.Timestamp)
+		shaMatches = shaMatches[:1]
+	}
+	for _, ciEvent := range shaMatches {
+		sha := event.Metadata["git_commit_sha"]
+		link := domain.EventLink{
+			ID:               uuid.New().String(),
+			IntentEventID:    ciEvent.ID,
+			ExecutionEventID: event.ID,
+			LinkType:         "sha_match",
+			Confidence:       1.0,
+			CreatedAt:        now,
+			Metadata: map[string]string{
+				"git_commit_sha": sha,
+				"reason":         fmt.Sprintf("Exact git_commit_sha annotation match: %s", sha),
+			},
+		}
+		if err := e.storage.SaveEventLink(ctx, link); err != nil {
+			return nil, fmt.Errorf("failed to save SHA link: %w", err)
+		}
+		links = append(links, link)
+	}
+
+	// Tier 2: Image tag match (confidence 0.9)
+	if tag, ok := event.Metadata["image_tag"]; ok && tag != "" {
+		var tagMatches []domain.ChangeEvent
+		for _, ciEvent := range ciEvents {
+			if ciTag, ok := ciEvent.Metadata["image_tag"]; ok && ciTag == tag {
+				// Skip if already linked by SHA
+				alreadyLinked := false
+				for _, existing := range links {
+					if existing.IntentEventID == ciEvent.ID {
+						alreadyLinked = true
+						break
+					}
+				}
+				if !alreadyLinked {
+					tagMatches = append(tagMatches, ciEvent)
+				}
+			}
+		}
+		if len(tagMatches) > 1 {
+			sortByClosest(tagMatches, event.Timestamp)
+			tagMatches = tagMatches[:1]
+		}
+		for _, ciEvent := range tagMatches {
+			link := domain.EventLink{
+				ID:               uuid.New().String(),
+				IntentEventID:    ciEvent.ID,
+				ExecutionEventID: event.ID,
+				LinkType:         "image_tag_match",
+				Confidence:       0.9,
+				CreatedAt:        now,
+				Metadata: map[string]string{
+					"image_tag": tag,
+					"reason":    fmt.Sprintf("Exact image_tag match: %s", tag),
+				},
+			}
+			if err := e.storage.SaveEventLink(ctx, link); err != nil {
+				return nil, fmt.Errorf("failed to save tag link: %w", err)
+			}
+			links = append(links, link)
+		}
+	}
+
+	// Tier 3: Image tag contains SHA (fuzzy but high-signal)
+	// Only attempt if no exact match was found
+	if len(links) == 0 {
+		links, err = e.tryImageShaInferredLinks(ctx, event, from, to, now, links)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return links, nil
+}
+
+// LinkIntentToExecutions creates persistent links from an intent event (CI build) to
+// execution events (K8s rollouts) based on git_commit_sha and image_tag metadata matches.
+// This is the reverse of CreateIntentExecutionLinks: it searches forward from the intent
+// for matching executions within the correlation window.
+func (e *Engine) LinkIntentToExecutions(ctx context.Context, event domain.ChangeEvent) ([]domain.EventLink, error) {
+	// Only process intent events
+	if !event.IsIntent {
+		return nil, nil
+	}
+
+	// Build metadata to search for
+	metadataToLink := make(map[string]string)
+	if sha, ok := event.Metadata["git_commit_sha"]; ok && sha != "" {
+		metadataToLink["git_commit_sha"] = sha
+	}
+	if tag, ok := event.Metadata["image_tag"]; ok && tag != "" {
+		metadataToLink["image_tag"] = tag
+	}
+
+	if len(metadataToLink) == 0 {
+		return nil, nil // No linking metadata available
+	}
+
+	// Search for execution events within correlation window (forward in time from intent)
+	from := event.Timestamp
+	to := event.Timestamp.Add(e.config.Analysis.IntentExecutionCorrelationDur)
+
+	executionEvents, _, err := e.storage.GetChangeEvents(ctx, map[string]interface{}{
+		"is_execution_only": true,
+		"from_timestamp":    from,
+		"to_timestamp":      to,
+		"metadata_has_any":  metadataToLink,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to search for execution events: %w", err)
+	}
+
+	// Filter out already-linked execution events and collect pre-existing links
+	var links []domain.EventLink
+	now := time.Now().UTC()
+	var unlinkableExecs []domain.ChangeEvent
+
+	for _, execEvent := range executionEvents {
+		existingLinks, err := e.storage.GetEventLinksByExecutionID(ctx, execEvent.ID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to check existing links: %w", err)
+		}
+		alreadyLinked := false
+		for _, link := range existingLinks {
+			if link.IntentEventID == event.ID && (link.LinkType == "sha_match" || link.LinkType == "image_tag_match" || link.LinkType == "image_sha_inferred") {
+				alreadyLinked = true
+				links = append(links, link)
+				break
+			}
+		}
+		if !alreadyLinked {
+			unlinkableExecs = append(unlinkableExecs, execEvent)
+		}
+	}
+
+	// For each execution event, create links with closest-in-time tiebreaker per tier
+	for _, execEvent := range unlinkableExecs {
+		// Tier 1: SHA match (confidence 1.0)
+		if sha, ok := event.Metadata["git_commit_sha"]; ok && sha != "" {
+			if execSha, ok := execEvent.Metadata["git_commit_sha"]; ok && execSha == sha {
+				link := domain.EventLink{
+					ID:               uuid.New().String(),
+					IntentEventID:    event.ID,
+					ExecutionEventID: execEvent.ID,
+					LinkType:         "sha_match",
+					Confidence:       1.0,
+					CreatedAt:        now,
+					Metadata: map[string]string{
+						"git_commit_sha": sha,
+						"reason":         fmt.Sprintf("Exact git_commit_sha annotation match: %s", sha),
+					},
+				}
+				if err := e.storage.SaveEventLink(ctx, link); err != nil {
+					return nil, fmt.Errorf("failed to save SHA link: %w", err)
+				}
+				links = append(links, link)
+				continue
+			}
+		}
+
+		// Tier 2: Image tag match (confidence 0.9)
+		if tag, ok := event.Metadata["image_tag"]; ok && tag != "" {
+			if execTag, ok := execEvent.Metadata["image_tag"]; ok && execTag == tag {
+				link := domain.EventLink{
+					ID:               uuid.New().String(),
+					IntentEventID:    event.ID,
+					ExecutionEventID: execEvent.ID,
+					LinkType:         "image_tag_match",
+					Confidence:       0.9,
+					CreatedAt:        now,
+					Metadata: map[string]string{
+						"image_tag": tag,
+						"reason":    fmt.Sprintf("Exact image_tag match: %s", tag),
+					},
+				}
+				if err := e.storage.SaveEventLink(ctx, link); err != nil {
+					return nil, fmt.Errorf("failed to save tag link: %w", err)
+				}
+				links = append(links, link)
+			}
+		}
+	}
+
+	// Tier 3: Image tag contains SHA (fuzzy but high-signal)
+	// Only attempt if no exact match was found
+	if len(links) == 0 {
+		links, err = e.tryImageShaInferredLinksReverse(ctx, event, from, to, now, links)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return links, nil
+}
+
+// tryImageShaInferredLinks attempts tier 3 matching: checks if execution image_tag contains
+// the intent's git_commit_sha prefix. Only called when exact match tiers yield no results.
+func (e *Engine) tryImageShaInferredLinks(ctx context.Context, event domain.ChangeEvent, from, to time.Time, now time.Time, links []domain.EventLink) ([]domain.EventLink, error) {
+	execImageTag := event.Metadata["image_tag"]
+	if execImageTag == "" {
+		return links, nil
+	}
+
+	// Extract tag portion (after last ":")
+	tag := execImageTag
+	if idx := strings.LastIndex(execImageTag, ":"); idx >= 0 {
+		tag = execImageTag[idx+1:]
+	}
+	if len(tag) < 7 {
+		return links, nil
+	}
+
+	// Search for intent events without metadata filter (broader search)
+	ciEvents, _, err := e.storage.GetChangeEvents(ctx, map[string]interface{}{
+		"is_intent_only": true,
+		"from_timestamp": from,
+		"to_timestamp":   to,
+		"limit":          50,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to search for intent events (inferred): %w", err)
+	}
+
+	for _, ciEvent := range ciEvents {
+		ciSha, ok := ciEvent.Metadata["git_commit_sha"]
+		if !ok || len(ciSha) < 7 {
+			continue
+		}
+		// Check if tag contains SHA prefix
+		prefixLen := len(ciSha)
+		if prefixLen > len(tag) {
+			prefixLen = len(tag)
+		}
+		if strings.Contains(tag, ciSha[:prefixLen]) {
+			link := domain.EventLink{
+				ID:               uuid.New().String(),
+				IntentEventID:    ciEvent.ID,
+				ExecutionEventID: event.ID,
+				LinkType:         "image_sha_inferred",
+				Confidence:       0.85,
+				CreatedAt:        now,
+				Metadata: map[string]string{
+					"image_tag":      execImageTag,
+					"git_commit_sha": ciSha,
+					"reason":         fmt.Sprintf("Image tag '%s' contains commit SHA prefix", tag),
+				},
+			}
+			if err := e.storage.SaveEventLink(ctx, link); err != nil {
+				return nil, fmt.Errorf("failed to save inferred SHA link: %w", err)
+			}
+			links = append(links, link)
+			break // One inferred link per execution event
+		}
+	}
+
+	return links, nil
+}
+
+// tryImageShaInferredLinksReverse is the reverse direction: from intent, find executions
+// whose image_tag contains the intent's git_commit_sha.
+func (e *Engine) tryImageShaInferredLinksReverse(ctx context.Context, event domain.ChangeEvent, from, to time.Time, now time.Time, links []domain.EventLink) ([]domain.EventLink, error) {
+	ciSha := event.Metadata["git_commit_sha"]
+	if ciSha == "" || len(ciSha) < 7 {
+		return links, nil
+	}
+
+	// Search for execution events without metadata filter (broader search)
+	execEvents, _, err := e.storage.GetChangeEvents(ctx, map[string]interface{}{
+		"is_execution_only": true,
+		"from_timestamp":    from,
+		"to_timestamp":      to,
+		"limit":             50,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to search for execution events (inferred): %w", err)
+	}
+
+	for _, execEvent := range execEvents {
+		execImageTag := execEvent.Metadata["image_tag"]
+		if execImageTag == "" {
+			continue
+		}
+
+		tag := execImageTag
+		if idx := strings.LastIndex(execImageTag, ":"); idx >= 0 {
+			tag = execImageTag[idx+1:]
+		}
+		if len(tag) < 7 {
+			continue
+		}
+
+		prefixLen := len(ciSha)
+		if prefixLen > len(tag) {
+			prefixLen = len(tag)
+		}
+		if strings.Contains(tag, ciSha[:prefixLen]) {
+			link := domain.EventLink{
+				ID:               uuid.New().String(),
+				IntentEventID:    event.ID,
+				ExecutionEventID: execEvent.ID,
+				LinkType:         "image_sha_inferred",
+				Confidence:       0.85,
+				CreatedAt:        now,
+				Metadata: map[string]string{
+					"image_tag":      execImageTag,
+					"git_commit_sha": ciSha,
+					"reason":         fmt.Sprintf("Image tag '%s' contains commit SHA prefix", tag),
+				},
+			}
+			if err := e.storage.SaveEventLink(ctx, link); err != nil {
+				return nil, fmt.Errorf("failed to save inferred SHA link: %w", err)
+			}
+			links = append(links, link)
+		}
+	}
+
+	return links, nil
+}
+
+// CreateConfigTriggerLinks creates links between deployment/statefulset rollouts and
+// recent ConfigMap/Secret changes that may have triggered the rollout.
+func (e *Engine) CreateConfigTriggerLinks(ctx context.Context, event domain.ChangeEvent) ([]domain.EventLink, error) {
+	// Only process rollout events
+	if event.ChangeType != "deployment_rollout" && event.ChangeType != "statefulset_rollout" {
+		return nil, nil
+	}
+
+	// Check if config trigger links already exist
+	existingLinks, err := e.storage.GetEventLinksByExecutionID(ctx, event.ID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to check existing config links: %w", err)
+	}
+
+	var configLinks []domain.EventLink
+	for _, link := range existingLinks {
+		if link.LinkType == "config_trigger" {
+			configLinks = append(configLinks, link)
+		}
+	}
+	if len(configLinks) > 0 {
+		return configLinks, nil
+	}
+
+	// Search for config changes before the rollout timestamp
+	configTriggerDur := e.config.Analysis.ConfigTriggerDur
+	if configTriggerDur == 0 {
+		configTriggerDur = 15 * time.Minute // Default fallback
+	}
+
+	// Deduplicate config events by ID (most recent per resource)
+	seenConfigEvents := make(map[string]domain.ChangeEvent)
+
+	for _, service := range event.AffectedServices {
+		configEvents, err := e.storage.GetRecentConfigChangeEvents(ctx, service, event.Timestamp, configTriggerDur)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get recent config changes for %s: %w", service, err)
+		}
+
+		for _, configEvent := range configEvents {
+			// Keep only the most recent per event ID (already sorted by timestamp DESC)
+			if _, exists := seenConfigEvents[configEvent.ID]; !exists {
+				seenConfigEvents[configEvent.ID] = configEvent
+			}
+		}
+	}
+
+	// Create links with proximity-based confidence
+	var links []domain.EventLink
+	now := time.Now().UTC()
+
+	for _, configEvent := range seenConfigEvents {
+		// Calculate proximity ratio: 1.0 at rollout time, 0.0 at window edge
+		timeDelta := event.Timestamp.Sub(configEvent.Timestamp)
+		proximityRatio := 1.0 - (float64(timeDelta) / float64(configTriggerDur))
+		if proximityRatio < 0 {
+			proximityRatio = 0
+		}
+		if proximityRatio > 1 {
+			proximityRatio = 1
+		}
+
+		// Confidence = 0.7 + (0.2 * proximity)
+		confidence := 0.7 + (0.2 * proximityRatio)
+
+		link := domain.EventLink{
+			ID:               uuid.New().String(),
+			IntentEventID:    configEvent.ID,
+			ExecutionEventID: event.ID,
+			LinkType:         "config_trigger",
+			Confidence:       confidence,
+			CreatedAt:        now,
+			Metadata: map[string]string{
+				"config_event_type": configEvent.ChangeType,
+				"time_delta_sec":    strconv.FormatInt(int64(timeDelta.Seconds()), 10),
+				"reason":            fmt.Sprintf("%s %s changed %s before rollout", configEvent.ChangeType, configEvent.Summary, timeDelta.Round(time.Second)),
+			},
+		}
+
+		if err := e.storage.SaveEventLink(ctx, link); err != nil {
+			return nil, fmt.Errorf("failed to save config trigger link: %w", err)
+		}
+		links = append(links, link)
+	}
+
+	return links, nil
+}
+
+// changeTypeWeights maps change types to risk weights.
+// Full image deployments carry the highest risk; config changes are lower.
+var changeTypeWeights = map[string]float64{
+	"deployment_rollout":  1.0,
+	"statefulset_rollout": 1.0,
+	"build_success":       0.8,
+	"tag_created":         0.7,
+	"release_published":   0.7,
+	"branch_merged":       0.6,
+	"configmap_update":    0.5,
+	"secret_update":       0.5,
+}
+
+// RankChanges ranks concurrent changes for a service within a time range
+// by their likelihood of causing degradation.
+func (e *Engine) RankChanges(ctx context.Context, service string, from, to time.Time) ([]domain.RankedChange, error) {
+	events, _, err := e.storage.GetChangeEvents(ctx, map[string]interface{}{
+		"from_timestamp": from,
+		"to_timestamp":   to,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch events for ranking: %w", err)
+	}
+
+	if len(events) == 0 {
+		return []domain.RankedChange{}, nil
+	}
+
+	// Midpoint of the query window — changes closer to this are more suspicious
+	midpoint := from.Add(to.Sub(from) / 2)
+	maxDistance := to.Sub(from) / 2
+	if maxDistance == 0 {
+		maxDistance = time.Minute // avoid division by zero
+	}
+
+	var ranked []domain.RankedChange
+	for _, event := range events {
+		// Get or compute the impact analysis
+		analysis, err := e.AnalyzeImpact(ctx, event)
+		if err == ErrImpactWindowNotClosed {
+			// Include pending events with zero impact score
+			analysis.ImpactLevel = "PENDING"
+		} else if err != nil {
+			continue // skip events that fail analysis
+		}
+
+		// Temporal proximity: 1.0 = right at midpoint, 0.0 = at edge of window
+		distance := math.Abs(float64(event.Timestamp.Sub(midpoint)))
+		temporal := 1.0 - math.Min(distance/float64(maxDistance), 1.0)
+
+		// Change type weight
+		typeWeight := 0.5 // default for unknown types
+		if w, ok := changeTypeWeights[event.ChangeType]; ok {
+			typeWeight = w
+		}
+
+		// Service scope: 1.0 if the service is directly affected, 0.5 otherwise
+		scope := 0.5
+		for _, s := range event.AffectedServices {
+			if s == service {
+				scope = 1.0
+				break
+			}
+		}
+
+		// Composite likelihood: weighted combination of all factors
+		// impact_score (0.5) + temporal (0.2) + change_type (0.2) + scope (0.1)
+		likelihood := (analysis.ImpactScore * 0.5) +
+			(temporal * 0.2) +
+			(typeWeight * 0.2) +
+			(scope * 0.1)
+
+		ranked = append(ranked, domain.RankedChange{
+			Analysis:          analysis,
+			LikelihoodScore:   likelihood,
+			TemporalProximity: temporal,
+			ChangeTypeWeight:  typeWeight,
+			ServiceScope:      scope,
+		})
+	}
+
+	// Sort by likelihood descending
+	sortRankedChanges(ranked)
+
+	// Assign ranks
+	for i := range ranked {
+		ranked[i].Rank = i + 1
+	}
+
+	return ranked, nil
+}
+
+// sortByClosest sorts change events by temporal proximity to the reference time (closest first).
+func sortByClosest(events []domain.ChangeEvent, reference time.Time) {
+	sort.Slice(events, func(i, j int) bool {
+		diffI := events[i].Timestamp.Sub(reference)
+		if diffI < 0 {
+			diffI = -diffI
+		}
+		diffJ := events[j].Timestamp.Sub(reference)
+		if diffJ < 0 {
+			diffJ = -diffJ
+		}
+		return diffI < diffJ
+	})
+}
+
+// sortRankedChanges sorts ranked changes by likelihood score descending.
+func sortRankedChanges(ranked []domain.RankedChange) {
+	for i := 1; i < len(ranked); i++ {
+		for j := i; j > 0 && ranked[j].LikelihoodScore > ranked[j-1].LikelihoodScore; j-- {
+			ranked[j], ranked[j-1] = ranked[j-1], ranked[j]
+		}
+	}
+}
+
+func calculateDeltas(baseline, impact domain.MetricValues) domain.MetricValues {
+	deltas := domain.MetricValues{
+		ErrorRate:         calculateDelta(baseline.ErrorRate, impact.ErrorRate),
+		LatencyP95:        calculateDelta(baseline.LatencyP95, impact.LatencyP95),
+		RPS:               calculateDelta(baseline.RPS, impact.RPS),
+		CPU:               calculateDelta(baseline.CPU, impact.CPU),
+		Memory:            calculateDelta(baseline.Memory, impact.Memory),
+		AdditionalMetrics: make(map[string]float64), // Initialize the map
+	}
+
+	for key, baselineVal := range baseline.AdditionalMetrics {
+		if impactVal, ok := impact.AdditionalMetrics[key]; ok {
+			deltas.AdditionalMetrics[key] = calculateDelta(baselineVal, impactVal)
+		} else {
+			// If an additional metric is in baseline but not in impact, treat impact as 0 for delta calculation
+			deltas.AdditionalMetrics[key] = calculateDelta(baselineVal, 0)
+		}
+	}
+	// Also consider metrics that might be in impact but not baseline (newly introduced metrics, though less likely for this use case)
+	for key, impactVal := range impact.AdditionalMetrics {
+		if _, ok := baseline.AdditionalMetrics[key]; !ok {
+			// If an additional metric is in impact but not in baseline, treat baseline as 0 for delta calculation
+			deltas.AdditionalMetrics[key] = calculateDelta(0, impactVal)
+		}
+	}
+
+	return deltas
 }
 
 func calculateDelta(baseline, impact float64) float64 {
@@ -163,26 +804,64 @@ func calculateDelta(baseline, impact float64) float64 {
 	return (impact - baseline) / baseline
 }
 
-func calculateImpactScore(deltas domain.MetricValues) float64 {
-	// Normalize scores (cap at 1.0, min 0.0)
-	// For error, latency, cpu, mem: increase is bad.
-	// For RPS: decrease is bad.
+func calculateImpactScore(deltas domain.MetricValues, weightsBuiltIn, weightsCustom map[string]float64) float64 {
+	// 1. Combine all weights and create a map of normalized metric scores
+	allWeights := make(map[string]float64)
+	normalizedScores := make(map[string]float64)
+	totalWeight := 0.0
 
-	normError := math.Max(0, math.Min(deltas.ErrorRate/2.0, 1.0))
-	normLatency := math.Max(0, math.Min(deltas.LatencyP95/2.0, 1.0))
-	normCPU := math.Max(0, math.Min(deltas.CPUSaturation/2.0, 1.0))
-	normMem := math.Max(0, math.Min(deltas.MemorySaturation/2.0, 1.0))
+	// Handle built-in metrics
+	if w, ok := weightsBuiltIn["error_rate"]; ok {
+		allWeights["error_rate"] = w
+		totalWeight += w
+		normalizedScores["error_rate"] = math.Max(0, math.Min(deltas.ErrorRate/2.0, 1.0))
+	}
+	if w, ok := weightsBuiltIn["latency_p95_ms"]; ok {
+		allWeights["latency_p95_ms"] = w
+		totalWeight += w
+		normalizedScores["latency_p95_ms"] = math.Max(0, math.Min(deltas.LatencyP95/2.0, 1.0))
+	}
+	if w, ok := weightsBuiltIn["cpu"]; ok {
+		allWeights["cpu"] = w
+		totalWeight += w
+		normalizedScores["cpu"] = math.Max(0, math.Min(deltas.CPU/2.0, 1.0))
+	}
+	if w, ok := weightsBuiltIn["memory"]; ok {
+		allWeights["memory"] = w
+		totalWeight += w
+		normalizedScores["memory"] = math.Max(0, math.Min(deltas.Memory/2.0, 1.0))
+	}
+	if w, ok := weightsBuiltIn["rps"]; ok {
+		allWeights["rps"] = w
+		totalWeight += w
+		// RPS: We care about drops. A drop of 100% (-1.0) should be score 1.0.
+		normalizedScores["rps"] = math.Max(0, math.Min(deltas.RPS*-1.0, 1.0))
+	}
 
-	// RPS: We care about drops. A drop of 100% (-1.0) should be score 1.0.
-	// Delta is (impact - baseline) / baseline.
-	// If baseline 100, impact 0 -> delta = -1.0.  -1.0 * -1 = 1.0.
-	normRPS := math.Max(0, math.Min(deltas.RPS*-1.0, 1.0))
+	// Handle custom metrics
+	for name, delta := range deltas.AdditionalMetrics {
+		if w, ok := weightsCustom[name]; ok {
+			allWeights[name] = w
+			totalWeight += w
+			// Assuming higher delta is worse for custom metrics for now
+			normalizedScores[name] = math.Max(0, math.Min(delta/2.0, 1.0))
+		}
+	}
 
-	totalScore := (normError * weightErrorRate) +
-		(normLatency * weightLatencyP95) +
-		(normCPU * weightCPUSaturation) +
-		(normMem * weightMemorySaturation) +
-		(normRPS * weightRPS)
+	// 2. Normalize weights if total is not 0
+	if totalWeight > 0 {
+		for name := range allWeights {
+			allWeights[name] /= totalWeight
+		}
+	}
+
+	// 3. Calculate final weighted score
+	totalScore := 0.0
+	for name, score := range normalizedScores {
+		if weight, ok := allWeights[name]; ok {
+			totalScore += score * weight
+		}
+	}
 
 	return totalScore
 }

@@ -6,12 +6,17 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
 	"valiant/internal/api"
 	"valiant/internal/collector"
 	"valiant/internal/config"
 	"valiant/internal/correlator"
 	"valiant/internal/domain"
 	"valiant/internal/metrics"
+	"valiant/internal/retention"
 	"valiant/internal/storage"
 
 	_ "github.com/lib/pq"
@@ -39,45 +44,84 @@ func main() {
 	fmt.Println("Connected to PostgreSQL database")
 
 	// Initialize dependencies
-	store := storage.NewPostgresStorage(db)
+	store := storage.NewPostgresStorage(db, cfg)
 
 	// Run migrations
-	if err := store.RunMigration("migrations/001_initial_schema.sql"); err != nil {
-		log.Fatalf("Failed to run migrations (001): %v", err)
+	migrationsPath := "migrations"
+
+	// First, ensure the schema_migrations table exists
+	if err := store.RunMigration(filepath.Join(migrationsPath, "000_create_schema_migrations_table.sql")); err != nil {
+		log.Fatalf("Failed to run initial migration to create schema_migrations table: %v", err)
 	}
-	if err := store.RunMigration("migrations/002_add_impact_snapshots.sql"); err != nil {
-		log.Fatalf("Failed to run migrations (002): %v", err)
+	fmt.Println("Initial migration 000_create_schema_migrations_table.sql applied (if not already present)")
+
+	files, err := os.ReadDir(migrationsPath)
+	if err != nil {
+		log.Fatalf("Failed to read migrations directory: %v", err)
 	}
-	if err := store.RunMigration("migrations/003_add_execution_fields.sql"); err != nil {
-		log.Fatalf("Failed to run migrations (003): %v", err)
+
+	sort.Slice(files, func(i, j int) bool {
+		return files[i].Name() < files[j].Name()
+	})
+
+	for _, file := range files {
+		if file.Name() == "000_create_schema_migrations_table.sql" {
+			continue // Skip the initial migration, it's already handled
+		}
+		if !file.IsDir() {
+			migrationFileName := file.Name()
+			if strings.HasSuffix(migrationFileName, ".sql") {
+				migrationPath := filepath.Join(migrationsPath, migrationFileName)
+				if err := store.RunMigration(migrationPath); err != nil {
+					log.Fatalf("Failed to run migration %s: %v", migrationFileName, err)
+				}
+				fmt.Printf("Migration %s applied\n", migrationFileName)
+			}
+		}
 	}
 	fmt.Println("Database migrations applied")
 
-	metricClient, err := metrics.NewPrometheusClient(cfg.Prometheus.URL, cfg.Prometheus.Queries)
+	metricClient, err := metrics.NewPrometheusClient(cfg.Prometheus.URL, cfg.Prometheus.Queries, cfg.Prometheus.AdditionalMetrics, cfg)
 	if err != nil {
 		log.Fatalf("Failed to initialize prometheus client: %v", err)
 	}
 
 	engine := correlator.NewEngine(store, metricClient, cfg)
-	router := api.NewRouter(store, engine)
+	router := api.NewRouter(store, engine, metricClient, cfg)
 
 	// Setup application context
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	// Start Background Worker (Automatic Analysis)
-	worker := correlator.NewWorker(engine)
+	worker := correlator.NewWorker(engine, cfg.Worker.PollingIntervalDur)
 	go worker.Start(ctx)
+
+	// Start Retention Worker
+	if cfg.Retention.EventTTLDur > 0 {
+		retentionWorker := retention.NewWorker(store, cfg.Retention.EventTTLDur)
+		go retentionWorker.Start(ctx, cfg.Retention.CleanupIntervalDur)
+	}
 
 	// Start Collectors
 	eventChan := make(chan domain.ChangeEvent, 100)
 
-	// Processor loop: Save events from channel
+	// Processor loop: Save events from channel and eagerly link
 	go func() {
 		for event := range eventChan {
 			log.Printf("Received event: %s (%s)", event.Summary, event.ID)
 			if err := store.SaveChangeEvent(ctx, event); err != nil {
 				log.Printf("Failed to save event: %v", err)
+				continue
+			}
+			// Eager linking for K8s-collected execution events
+			if event.IsExecution {
+				links, err := engine.CreateIntentExecutionLinks(ctx, event)
+				if err != nil {
+					log.Printf("Warning: eager linking failed for event %s: %v", event.ID, err)
+				} else if len(links) == 0 {
+					log.Printf("Orphaned execution event %s: %s (no matching CI event found)", event.ID, event.Summary)
+				}
 			}
 		}
 	}()

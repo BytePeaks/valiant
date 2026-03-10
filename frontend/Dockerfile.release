@@ -1,0 +1,46 @@
+# Stage 1: Install dependencies
+FROM node:20-alpine AS deps
+WORKDIR /app
+COPY frontend/package.json frontend/package-lock.json* ./
+RUN npm install --legacy-peer-deps
+
+# Stage 2: Build the application
+FROM node:20-alpine AS builder
+WORKDIR /app
+COPY --from=deps /app/node_modules ./node_modules
+COPY frontend/. .
+
+# Build-time env vars (can be overridden with --build-arg)
+ARG NEXT_PUBLIC_API_URL=http://localhost:8080/api/v1
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+
+RUN npm run build
+
+# Stage 3: Production runner
+FROM registry.access.redhat.com/ubi9/nodejs-20
+
+WORKDIR /app
+
+ENV NODE_ENV=production
+ENV PORT=3000
+
+# Set permissions for OpenShift
+# The user 'node' (UID 1001) is the default in this image.
+# We ensure the app directory is owned by this user and group 0.
+RUN chown -R 1001:0 /app
+
+# Copy standalone output
+COPY --chown=1001:0 --from=builder /app/.next/standalone ./
+# Copy static assets
+#COPY --chown=1001:0 --from=builder /app/public ./public
+COPY --chown=1001:0 --from=builder /app/.next/static ./.next/static
+
+# Ensure executability for random UID
+RUN chmod -R g+rx /app
+
+# Switch to the non-root user
+USER 1001
+
+EXPOSE 3000
+
+CMD ["node", "server.js"]

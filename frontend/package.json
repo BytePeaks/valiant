@@ -1,6 +1,6 @@
 {
   "name": "valiant-frontend",
-  "version": "0.1.0",
+  "version": "1.0.0-alpha",
   "private": true,
   "scripts": {
     "dev": "next dev",
@@ -10,17 +10,18 @@
   },
   "dependencies": {
     "autoprefixer": "^10.0.1",
-    "lucide-react": "^0.300.0",
-    "next": "16.0.0",
+    "lucide-react": "^0.563.0",
+    "next": "^14.0.0",
     "postcss": "^8",
-    "react": "^19",
-    "react-dom": "^19",
+    "react": "^18",
+    "react-dom": "^18",
     "tailwindcss": "^3.3.0"
   },
   "devDependencies": {
     "@types/node": "^20",
     "@types/react": "^18",
     "@types/react-dom": "^18",
+    "eslint": "^8.0.0",
     "typescript": "^5"
   }
 }

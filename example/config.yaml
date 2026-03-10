@@ -16,7 +16,7 @@ prometheus:
   url: "http://prometheus:9090"
 
   # Custom PromQL Query Templates
-  # You can override the default queries here to match your specific exporters or labels.
+  # You can extend the default queries here to match your specific exporters or labels.
   # Available variables:
   #   {{ .Services }} - Regex-friendly list of services (e.g., "svc-a|svc-b")
   #   {{ .Duration }} - The analysis window duration (e.g., "30m")
@@ -27,6 +27,23 @@ prometheus:
   #   rps: `avg_over_time(sum(rate(http_requests_total{service=~"{{ .Services }}"}[1m]))[{{ .Duration }}])`
   #   cpu_saturation: `avg_over_time(sum(rate(container_cpu_usage_seconds_total{container=~"{{ .Services }}"}[1m]))[{{ .Duration }}])`
   #   memory_saturation: `avg_over_time(sum(container_memory_usage_bytes{container=~"{{ .Services }}"})[{{ .Duration }}])`
+
+  # Additional Metrics
+  # ------------------
+  # Define a list of custom PromQL queries. These will be collected for every analysis.
+  # Users can then choose which metrics (core and additional) to view in the UI.
+  additional_metrics:
+      # Metrics name displayed on frontend
+    - name: "orders_per_minute"
+      # It is necessary to replace query in multiline value in order not to break YAML parsing!
+      query: |
+        sum(rate(app_orders_total{service=~"{{ .Services }}"}[1m])) * 60
+      # Example Lucide icon
+      icon: "ShoppingCart"
+    - name: "payment_failure_rate"
+      query: |
+        sum(rate(app_payment_failures_total{service=~"{{ .Services }}"}[1m])) / sum(rate(app_payments_total{service=~"{{ .Services }}"}[1m]))
+      icon: "CreditCard"
 
 # Kubernetes Collector Configuration
 # ----------------------------------
@@ -49,6 +66,27 @@ kubernetes:
   # Trusted sources for the 'valiant.io/source' annotation.
   allowed_sources: ["argocd", "helm", "cicd"]
 
+  # Watch ConfigMaps for data changes. When enabled, Valiant tracks ConfigMap
+  # data hashes and emits change events when the data is modified.
+  # Affected services are resolved by scanning Deployments that reference the ConfigMap.
+  watch_configmaps: true
+
+  # Watch Secrets for data changes. When enabled, Valiant tracks Secret data
+  # hashes and emits change events when the data is modified.
+  # ServiceAccountToken-type secrets are automatically skipped.
+  # Secret data values and hashes are never exposed in event metadata.
+  watch_secrets: true
+
+# Event Retention Configuration
+# -----------------------------
+retention:
+  # How long to keep change events before automatic cleanup.
+  # Supports "d" suffix for days (e.g. "90d") and standard Go durations (e.g. "2160h").
+  event_ttl: "90d"
+
+  # How often the retention worker runs to delete expired events.
+  cleanup_interval: "1h"
+
 # Analysis Window Configuration
 # -----------------------------
 analysis:
@@ -61,4 +99,63 @@ analysis:
 
   # Duration to look back from an execution event to find a corresponding intent (CI) event.
   # If no intent event is found within this window, the execution event is marked as orphaned.
-  orphan_correlation_window: "1h"
+  intent_execution_correlation_window: "1h"
+
+  # Max time between a ConfigMap/Secret change and a subsequent rollout
+  # for Valiant to consider the config change as a causal trigger.
+  config_trigger_window: "15m"
+
+  # Metric Weights
+  # --------------
+  # Define the relative importance of each metric in the impact score calculation.
+  # The weights are normalized, so you can use any numbers you want (e.g., 1-100).
+  # If a metric is not listed here, it will not be included in the score.
+  #
+  # The default built-in weights are applied automatically.
+  # Uncomment the section below if you need to override the default built-in metric weights.
+  # weights_built_in:
+  #   error_rate: 0.4
+  #   latency_p95_ms: 0.3
+  #   cpu: 0.1
+  #   memory: 0.1
+  #   rps: 0.1
+
+  # Define weights for any custom metrics you have configured under `prometheus.additional_metrics`.
+  # The name here must exactly match the `name` in the `additional_metrics` list.
+  # Name must match EXACTLY!
+  weights_custom:
+    orders_per_minute: 0.1
+    payment_failure_rate: 0.2
+
+# Linking Configuration
+# ---------------------
+# Define templates to generate clickable deep links from event metadata.
+# These links will appear in the UI for relevant ChangeEvents.
+#
+# Each template specifies:
+# - name: Display name for the link in the UI.
+# - metadata_has: A list of metadata keys that MUST be present in a ChangeEvent's
+#                 metadata for this link template to be considered. This prevents
+#                 broken or irrelevant links.
+# - url_template: A Go template string to construct the URL. Variables correspond
+#                 to keys in the ChangeEvent's metadata (e.g., {{ .git_commit_sha }}).
+#                 If a required metadata key is missing, the link will not be generated.
+linking:
+  - name: "View Commit on GitHub"
+    metadata_has: ["repository_url", "git_commit_sha"]
+    url_template: "{{ .repository_url }}/commit/{{ .git_commit_sha }}"
+
+  - name: "View Build on Jenkins"
+    metadata_has: ["jenkins_url", "jenkins_job_name", "jenkins_build_id"]
+    url_template: "{{ .jenkins_url }}/job/{{ .jenkins_job_name }}/{{ .jenkins_build_id }}"
+
+  - name: "Open ArgoCD Application"
+    metadata_has: ["argocd_url", "argocd_app_name"]
+    url_template: "{{ .argocd_url }}/applications/{{ .argocd_app_name }}"
+
+# Worker Configuration
+# --------------------
+worker:
+  # How often the analysis worker checks for new events to process.
+  # Supports standard Go durations (e.g., "1m", "30s", "1h").
+  polling_interval: "5m"

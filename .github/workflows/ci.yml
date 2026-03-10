@@ -1,0 +1,81 @@
+name: CI Pipelines
+
+on:
+  push:
+    branches:
+      - develop
+      - 'feature/**'
+      - 'feat/**'
+      - 'bugfix/**'
+      - 'fix/**'
+      - 'chore/**'
+  pull_request:
+    branches:
+      - develop
+    types: [opened, synchronize, reopened]
+
+jobs:
+  backend-ci:
+    name: Backend CI
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+
+      - name: Cache Go modules
+        uses: actions/cache@v4
+        with:
+          path: ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Go Format
+        run: |
+          go fmt ./...
+          git diff --exit-code
+        working-directory: ./backend
+
+      - name: Go Vet
+        run: go vet ./...
+        working-directory: ./backend
+
+      - name: Run Backend Tests
+        run: go test -v ./...
+        working-directory: ./backend
+
+      - name: Build Backend
+        run: go build -o valiant-backend ./cmd/valiant
+        working-directory: ./backend
+
+  frontend-ci:
+    name: Frontend CI
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: 'frontend/package-lock.json'
+
+      - name: Install Frontend Dependencies
+        run: npm ci
+        working-directory: ./frontend
+
+      #- name: Run Frontend Lint
+      #  run: npm run lint
+      #  working-directory: ./frontend
+
+      - name: Build Frontend
+        run: npm run build
+        working-directory: ./frontend
+
