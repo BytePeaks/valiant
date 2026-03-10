@@ -16,17 +16,24 @@ type MockStorage struct {
 	changeEvents []domain.ChangeEvent
 }
 
-func (m *MockStorage) SaveChangeEvent(ctx context.Context, event domain.ChangeEvent) error { return nil }
-func (m *MockStorage) GetChangeEvents(ctx context.Context, filters map[string]interface{}) ([]domain.ChangeEvent, error) {
+func (m *MockStorage) SaveChangeEvent(ctx context.Context, event domain.ChangeEvent) error {
+	return nil
+}
+func (m *MockStorage) GetChangeEvents(ctx context.Context, filters map[string]interface{}) ([]domain.ChangeEvent, int, error) {
 	if m.changeEvents != nil {
-		return m.changeEvents, nil
+		return m.changeEvents, len(m.changeEvents), nil
 	}
-	return nil, nil
+	return nil, 0, nil
+}
+func (m *MockStorage) DeleteChangeEventsOlderThan(ctx context.Context, cutoff time.Time) (int64, error) {
+	return 0, nil
 }
 func (m *MockStorage) GetChangeEventByID(ctx context.Context, id string) (domain.ChangeEvent, error) {
 	return domain.ChangeEvent{}, nil
 }
-func (m *MockStorage) GetServices(ctx context.Context) ([]string, error) { return nil, nil }
+func (m *MockStorage) GetServices(ctx context.Context, namespace string, linkedOnly bool) ([]string, error) {
+	return nil, nil
+}
 func (m *MockStorage) GetEventsPendingAnalysis(ctx context.Context) ([]domain.ChangeEvent, error) {
 	return nil, nil
 }
@@ -42,6 +49,31 @@ func (m *MockStorage) GetImpactAnalysisByEventID(ctx context.Context, eventID st
 	}
 	return nil, nil // Not found
 }
+func (m *MockStorage) GetServicePreferences(ctx context.Context, serviceName string) ([]string, error) {
+	return []string{}, nil
+}
+func (m *MockStorage) SaveServicePreferences(ctx context.Context, serviceName string, visibleMetrics []string) error {
+	return nil
+}
+
+func (m *MockStorage) GetAnalyzedEventIDs(ctx context.Context, eventIDs []string) (map[string]bool, error) {
+	return map[string]bool{}, nil
+}
+
+func (m *MockStorage) GetNamespaces(ctx context.Context) ([]string, error) {
+	return []string{}, nil
+}
+
+func (m *MockStorage) SaveEventLink(ctx context.Context, link domain.EventLink) error { return nil }
+func (m *MockStorage) GetEventLinksByEventID(ctx context.Context, eventID string) ([]domain.EventLink, error) {
+	return nil, nil
+}
+func (m *MockStorage) GetEventLinksByExecutionID(ctx context.Context, executionEventID string) ([]domain.EventLink, error) {
+	return nil, nil
+}
+func (m *MockStorage) GetRecentConfigChangeEvents(ctx context.Context, service string, before time.Time, within time.Duration) ([]domain.ChangeEvent, error) {
+	return nil, nil
+}
 
 // MockMetrics implements metrics.MetricsProvider
 type MockMetrics struct {
@@ -50,21 +82,18 @@ type MockMetrics struct {
 }
 
 func (m *MockMetrics) GetAverageMetrics(ctx context.Context, services []string, start, end time.Time) (domain.MetricValues, error) {
-	// Simple heuristic: if start time is "old" (baseline), return baseline
-	// In reality, tests will control this via the call order or context, but for simple unit test:
-	// We can check the duration between start/end to guess, or just alternate.
-	// A better way for deterministic testing is to define behavior based on the *window*.
-	// But since the Engine calls Baseline first, then Impact...
-	
-	// Let's just return fixed values for the test case setup.
-	// This mock is a bit simplistic; for a real test we might want checking arguments.
 	return m.baseline, nil
+}
+
+func (m *MockMetrics) GetAvailableMetrics() []domain.MetricInfo {
+	return []domain.MetricInfo{}
 }
 
 // Better MockMetrics that allows specifying return values for specific calls
 type ControllableMetrics struct {
-	Calls []domain.MetricValues
-	Index int
+	Calls            []domain.MetricValues
+	Index            int
+	AvailableMetrics []domain.MetricInfo
 }
 
 func (m *ControllableMetrics) GetAverageMetrics(ctx context.Context, services []string, start, end time.Time) (domain.MetricValues, error) {
@@ -74,6 +103,10 @@ func (m *ControllableMetrics) GetAverageMetrics(ctx context.Context, services []
 	val := m.Calls[m.Index]
 	m.Index++
 	return val, nil
+}
+
+func (m *ControllableMetrics) GetAvailableMetrics() []domain.MetricInfo {
+	return m.AvailableMetrics
 }
 
 func TestAnalyzeImpact_WindowNotClosed(t *testing.T) {
@@ -101,19 +134,21 @@ func TestAnalyzeImpact_CalculatesAndSaves(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Analysis.BaselineDur = 30 * time.Minute
 	cfg.Analysis.ImpactDur = 30 * time.Minute
+	cfg.Analysis.WeightsBuiltIn = map[string]float64{
+		"error_rate":     0.4,
+		"latency_p95_ms": 0.3,
+	}
+	cfg.Analysis.WeightsCustom = map[string]float64{}
 
 	store := &MockStorage{}
-	
+
 	// Setup metrics: Baseline (good), Impact (bad errors AND latency)
 	metrics := &ControllableMetrics{
 		Calls: []domain.MetricValues{
 			// Baseline (Non-zero errors to allow >100% delta)
-			{ErrorRate: 0.01, LatencyP95: 100, RPS: 100}, 
-			// Impact: 
-			// Errors: 0.01 -> 0.05 (Delta 4.0). Norm = min(4.0/2.0, 1.0) = 1.0. Contrib = 0.4.
-			// Latency: 100 -> 300 (Delta 2.0). Norm = min(2.0/2.0, 1.0) = 1.0. Contrib = 0.3.
-			// Total Score = 0.4 + 0.3 = 0.7 (HIGH)
-			{ErrorRate: 0.05, LatencyP95: 300, RPS: 100}, 
+			{ErrorRate: 0.01, LatencyP95: 100, RPS: 100},
+			// Impact:
+			{ErrorRate: 0.05, LatencyP95: 300, RPS: 100},
 		},
 	}
 
@@ -144,11 +179,11 @@ func TestAnalyzeImpact_CalculatesAndSaves(t *testing.T) {
 func TestAnalyzeImpact_LowConfidence(t *testing.T) {
 	cfg := &config.Config{}
 	store := &MockStorage{}
-	
+
 	// Low RPS scenario
 	metrics := &ControllableMetrics{
 		Calls: []domain.MetricValues{
-			{RPS: 0.5, ErrorRate: 0}, // Baseline
+			{RPS: 0.5, ErrorRate: 0},   // Baseline
 			{RPS: 0.8, ErrorRate: 0.5}, // Impact (High error rate but low volume)
 		},
 	}
@@ -158,8 +193,8 @@ func TestAnalyzeImpact_LowConfidence(t *testing.T) {
 
 	analysis, _ := engine.AnalyzeImpact(context.Background(), event)
 
-	if analysis.ConfidenceScore >= 1.0 {
-		t.Errorf("expected low confidence score (< 1.0) for low RPS, got %f", analysis.ConfidenceScore)
+	if analysis.ConfidenceScore != 0.5 {
+		t.Errorf("expected confidence score 0.5 for low RPS (both baseline and impact < 1.0), got %f", analysis.ConfidenceScore)
 	}
 }
 
@@ -191,6 +226,10 @@ func TestAnalyzeImpact_PerfectStability(t *testing.T) {
 
 func TestAnalyzeImpact_RPSDrop(t *testing.T) {
 	cfg := &config.Config{}
+	cfg.Analysis.WeightsBuiltIn = map[string]float64{
+		"rps": 1.0, // Only consider RPS
+	}
+	cfg.Analysis.WeightsCustom = map[string]float64{}
 	store := &MockStorage{}
 	metrics := &ControllableMetrics{
 		Calls: []domain.MetricValues{
@@ -204,15 +243,19 @@ func TestAnalyzeImpact_RPSDrop(t *testing.T) {
 
 	analysis, _ := engine.AnalyzeImpact(context.Background(), event)
 
-	// RPS drop of 100% should contribute 1.0 * weightRPS (0.1) = 0.1
-	// This might be LOW impact depending on threshold (0.1 is LOW threshold)
-	if analysis.ImpactScore < 0.1 {
-		t.Errorf("expected at least 0.1 score for 100%% RPS drop, got %f", analysis.ImpactScore)
+	// RPS drop of 100% should be a normalized score of 1.0.
+	// With only RPS weighted, the final score should be 1.0.
+	if analysis.ImpactScore != 1.0 {
+		t.Errorf("expected exactly 1.0 score for 100%% RPS drop with only RPS weighted, got %f", analysis.ImpactScore)
 	}
 }
 
 func TestAnalyzeImpact_ZeroBaseline(t *testing.T) {
 	cfg := &config.Config{}
+	cfg.Analysis.WeightsBuiltIn = map[string]float64{
+		"error_rate": 1.0, // Only consider error rate
+	}
+	cfg.Analysis.WeightsCustom = map[string]float64{}
 	store := &MockStorage{}
 	metrics := &ControllableMetrics{
 		Calls: []domain.MetricValues{
@@ -228,8 +271,8 @@ func TestAnalyzeImpact_ZeroBaseline(t *testing.T) {
 
 	// Logic: if baseline 0 and impact > 0, delta is 1.0 (100% increase cap)
 	// Normalized error score = min(1.0/2.0, 1.0) = 0.5
-	// Weighted score = 0.5 * 0.4 = 0.2
-	expectedScore := 0.2
+	// With only error rate weighted, the final score is 0.5
+	expectedScore := 0.5
 	if analysis.ImpactScore != expectedScore {
 		t.Errorf("expected score %f for zero baseline spike, got %f", expectedScore, analysis.ImpactScore)
 	}
@@ -238,10 +281,10 @@ func TestAnalyzeImpact_ZeroBaseline(t *testing.T) {
 func TestAnalyzeImpact_PrometheusError(t *testing.T) {
 	cfg := &config.Config{}
 	store := &MockStorage{}
-	
+
 	// Mock metrics returns error
 	metrics := &ErrorMetrics{err: errors.New("prometheus connection refused")}
-	
+
 	engine := correlator.NewEngine(store, metrics, cfg)
 	event := domain.ChangeEvent{ID: "evt-err", Timestamp: time.Now().Add(-1 * time.Hour)}
 
@@ -254,19 +297,23 @@ func TestAnalyzeImpact_PrometheusError(t *testing.T) {
 type ErrorMetrics struct {
 	err error
 }
+
 func (m *ErrorMetrics) GetAverageMetrics(ctx context.Context, s []string, start, end time.Time) (domain.MetricValues, error) {
 	return domain.MetricValues{}, m.err
+}
+func (m *ErrorMetrics) GetAvailableMetrics() []domain.MetricInfo {
+	return []domain.MetricInfo{}
 }
 
 func TestAnalyzeImpact_NoServices(t *testing.T) {
 	cfg := &config.Config{}
 	store := &MockStorage{}
 	metrics := &MockMetrics{baseline: domain.MetricValues{RPS: 10}}
-	
+
 	engine := correlator.NewEngine(store, metrics, cfg)
 	// Event with empty affected_services
 	event := domain.ChangeEvent{
-		ID:               "evt-no-svc", 
+		ID:               "evt-no-svc",
 		Timestamp:        time.Now().Add(-1 * time.Hour),
 		AffectedServices: []string{},
 	}
@@ -287,9 +334,9 @@ func TestAnalyzeImpact_InstantRollout(t *testing.T) {
 	metrics := &ControllableMetrics{
 		Calls: []domain.MetricValues{{RPS: 10}, {RPS: 10}},
 	}
-	
+
 	engine := correlator.NewEngine(store, metrics, cfg)
-	
+
 	// Start and End times are identical
 	now := time.Now().Add(-1 * time.Hour)
 	event := domain.ChangeEvent{
@@ -304,157 +351,468 @@ func TestAnalyzeImpact_InstantRollout(t *testing.T) {
 	}
 }
 
-func TestAnalyzeImpact_OrphanEvent(t *testing.T) {
+func TestAnalyzeImpact_IntentExecutionLinking(t *testing.T) {
 	cfg := &config.Config{}
-	cfg.Analysis.OrphanCorrelationDur = 1 * time.Hour
-	// Metrics will be called for baseline/impact, so provide dummy values
-	metrics := &ControllableMetrics{
-		Calls: []domain.MetricValues{{}, {}},
-	}
-	eventTime := time.Now().Add(-2 * time.Hour) // Far enough in past
+	cfg.Analysis.IntentExecutionCorrelationDur = 1 * time.Hour
+	metrics := &ControllableMetrics{Calls: []domain.MetricValues{{}, {}}, AvailableMetrics: []domain.MetricInfo{}}
+	eventTime := time.Now().Add(-2 * time.Hour)
 
-	// --- SCENARIO 1: Is Orphaned ---
-	t.Run("IsOrphaned", func(t *testing.T) {
+	t.Run("Linked GitOps event", func(t *testing.T) {
 		store := &MockStorage{
-			changeEvents: []domain.ChangeEvent{}, // No corresponding CI event
-		}
-		engine := correlator.NewEngine(store, metrics, cfg)
-		event := domain.ChangeEvent{
-			ID:               "evt-orphan",
-			Timestamp:        eventTime,
-			TriggerType:      "GitOps",
-			AffectedServices: []string{"service-a"},
-		}
-
-		analysis, err := engine.AnalyzeImpact(context.Background(), event)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		if !analysis.IsOrphaned {
-			t.Error("expected IsOrphaned to be true, but it was false")
-		}
-	})
-
-	// --- SCENARIO 2: Not Orphaned ---
-	t.Run("NotOrphaned", func(t *testing.T) {
-		store := &MockStorage{
-			changeEvents: []domain.ChangeEvent{ // Found a matching CI event
-				{ID: "evt-ci-match", TriggerType: "CI"},
+			changeEvents: []domain.ChangeEvent{
+				{ID: "ci-evt-1", IsIntent: true, TriggerType: "CI", Metadata: map[string]string{"git_commit_sha": "abcdef123"}},
 			},
 		}
 		engine := correlator.NewEngine(store, metrics, cfg)
 		event := domain.ChangeEvent{
-			ID:               "evt-not-orphan",
-			Timestamp:        eventTime,
-			TriggerType:      "GitOps",
-			AffectedServices: []string{"service-a"},
+			ID:          "exec-evt-1",
+			IsExecution: true,
+			TriggerType: "GitOps",
+			Timestamp:   eventTime,
+			Metadata:    map[string]string{"git_commit_sha": "abcdef123"},
 		}
-
 		analysis, err := engine.AnalyzeImpact(context.Background(), event)
 		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
+			t.Fatalf("Unexpected error: %v", err)
 		}
-
 		if analysis.IsOrphaned {
-			t.Error("expected IsOrphaned to be false, but it was true")
+			t.Error("Expected IsOrphaned to be false, but it was true")
 		}
 	})
 
-	// --- SCENARIO 3: Non-execution events are never orphaned ---
-	t.Run("NeverOrphanedForCI", func(t *testing.T) {
-		store := &MockStorage{
-			changeEvents: []domain.ChangeEvent{}, // No other events exist
-		}
+	t.Run("Orphaned GitOps event (no match)", func(t *testing.T) {
+		store := &MockStorage{changeEvents: []domain.ChangeEvent{}}
 		engine := correlator.NewEngine(store, metrics, cfg)
 		event := domain.ChangeEvent{
-			ID:               "evt-ci-never-orphan",
-			Timestamp:        eventTime,
-			TriggerType:      "CI", // This is not an execution event
-			AffectedServices: []string{"service-a"},
+			ID:          "exec-evt-2",
+			IsExecution: true,
+			TriggerType: "GitOps",
+			Timestamp:   eventTime,
+			Metadata:    map[string]string{"git_commit_sha": "abcdef123"},
 		}
-
 		analysis, err := engine.AnalyzeImpact(context.Background(), event)
 		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
+			t.Fatalf("Unexpected error: %v", err)
 		}
-
-		if analysis.IsOrphaned {
-			t.Error("expected IsOrphaned to be false for a CI event, but it was true")
-		}
-	})
-
-	// --- SCENARIO 4: Match at the edge of the window ---
-	t.Run("MatchAtWindowEdge", func(t *testing.T) {
-		store := &MockStorage{
-			// The GetChangeEvents mock in the real implementation would handle the time filtering,
-			// for this test, we simulate that it *does* return an event that is precisely on the boundary.
-			changeEvents: []domain.ChangeEvent{{ID: "evt-ci-edge", TriggerType: "CI"}},
-		}
-		engine := correlator.NewEngine(store, metrics, cfg)
-		event := domain.ChangeEvent{
-			ID:               "evt-edge-case",
-			Timestamp:        eventTime,
-			TriggerType:      "GitOps",
-			AffectedServices: []string{"service-a"},
-		}
-
-		analysis, err := engine.AnalyzeImpact(context.Background(), event)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		if analysis.IsOrphaned {
-			t.Error("expected IsOrphaned to be false when match is at window edge, but it was true")
-		}
-	})
-
-	// --- SCENARIO 5: No match just outside the window ---
-	t.Run("NoMatchOutsideWindow", func(t *testing.T) {
-		store := &MockStorage{
-			// Simulate that the storage query found no events in the window.
-			changeEvents: []domain.ChangeEvent{},
-		}
-		engine := correlator.NewEngine(store, metrics, cfg)
-		event := domain.ChangeEvent{
-			ID:               "evt-outside-window",
-			Timestamp:        eventTime,
-			TriggerType:      "GitOps",
-			AffectedServices: []string{"service-a"},
-		}
-
-		analysis, err := engine.AnalyzeImpact(context.Background(), event)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
 		if !analysis.IsOrphaned {
-			t.Error("expected IsOrphaned to be true when match is outside window, but it was false")
+			t.Error("Expected IsOrphaned to be true, but it was false")
 		}
 	})
 
-	// --- SCENARIO 6: Orphaned when services do not overlap ---
-	t.Run("OrphanedWithMismatchedServices", func(t *testing.T) {
-		store := &MockStorage{
-			// Storage returns a CI event, but the correlator's filter *should* have excluded it.
-			// We simulate this by having the mock return an empty list.
-			changeEvents: []domain.ChangeEvent{},
-		}
+	t.Run("Orphaned GitOps event (no metadata)", func(t *testing.T) {
+		store := &MockStorage{}
 		engine := correlator.NewEngine(store, metrics, cfg)
 		event := domain.ChangeEvent{
-			ID:               "evt-mismatched-svc",
-			Timestamp:        eventTime,
-			TriggerType:      "GitOps",
-			AffectedServices: []string{"service-a"},
+			ID:          "exec-evt-3",
+			IsExecution: true,
+			TriggerType: "GitOps",
+			Timestamp:   eventTime,
+			Metadata:    map[string]string{},
 		}
-
 		analysis, err := engine.AnalyzeImpact(context.Background(), event)
 		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
+			t.Fatalf("Unexpected error: %v", err)
 		}
-
 		if !analysis.IsOrphaned {
-			t.Error("expected IsOrphaned to be true when services do not match, but it was false")
+			t.Error("Expected IsOrphaned to be true for event with no linking metadata, but it was false")
 		}
 	})
+
+	t.Run("Orphaned manual event", func(t *testing.T) {
+		store := &MockStorage{}
+		engine := correlator.NewEngine(store, metrics, cfg)
+		event := domain.ChangeEvent{
+			ID:          "manual-evt-1",
+			IsExecution: true,
+			TriggerType: "manual",
+			Timestamp:   eventTime,
+		}
+		analysis, err := engine.AnalyzeImpact(context.Background(), event)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		if !analysis.IsOrphaned {
+			t.Error("Expected IsOrphaned to be true for manual event, but it was false")
+		}
+	})
+
+	t.Run("CI event is never orphaned", func(t *testing.T) {
+		store := &MockStorage{}
+		engine := correlator.NewEngine(store, metrics, cfg)
+		event := domain.ChangeEvent{
+			ID:          "ci-evt-only",
+			IsIntent:    true,
+			TriggerType: "CI",
+			Timestamp:   eventTime,
+		}
+		analysis, err := engine.AnalyzeImpact(context.Background(), event)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		if analysis.IsOrphaned {
+			t.Error("Expected IsOrphaned to be false for a CI event, but it was true")
+		}
+	})
+}
+
+func TestRankChanges_NoChangeEvents(t *testing.T) {
+	cfg := &config.Config{}
+	store := &MockStorage{changeEvents: []domain.ChangeEvent{}}
+	metrics := &ControllableMetrics{}
+	engine := correlator.NewEngine(store, metrics, cfg)
+
+	ranked, err := engine.RankChanges(context.Background(), "api", time.Now().Add(-1*time.Hour), time.Now())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(ranked) != 0 {
+		t.Errorf("expected 0 ranked changes, got %d", len(ranked))
+	}
+}
+
+func TestRankChanges_SingleEvent(t *testing.T) {
+	cfg := &config.Config{}
+	eventTime := time.Now().Add(-1 * time.Hour)
+
+	store := &MockStorage{
+		changeEvents: []domain.ChangeEvent{
+			{
+				ID:               "evt-1",
+				ChangeType:       "deployment_rollout",
+				Timestamp:        eventTime,
+				AffectedServices: []string{"api"},
+			},
+		},
+	}
+
+	metrics := &ControllableMetrics{
+		Calls: []domain.MetricValues{
+			{RPS: 100, ErrorRate: 0.01},
+			{RPS: 100, ErrorRate: 0.05},
+		},
+	}
+
+	engine := correlator.NewEngine(store, metrics, cfg)
+	ranked, err := engine.RankChanges(context.Background(), "api", eventTime.Add(-30*time.Minute), eventTime.Add(30*time.Minute))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(ranked) != 1 {
+		t.Fatalf("expected 1 ranked change, got %d", len(ranked))
+	}
+	if ranked[0].Rank != 1 {
+		t.Errorf("expected rank 1, got %d", ranked[0].Rank)
+	}
+	if ranked[0].LikelihoodScore <= 0 {
+		t.Error("expected positive likelihood score")
+	}
+	if ranked[0].ChangeTypeWeight != 1.0 {
+		t.Errorf("expected change_type_weight 1.0 for deployment_rollout, got %f", ranked[0].ChangeTypeWeight)
+	}
+	if ranked[0].ServiceScope != 1.0 {
+		t.Errorf("expected service_scope 1.0 for direct service, got %f", ranked[0].ServiceScope)
+	}
+}
+
+func TestRankChanges_SortsByLikelihood(t *testing.T) {
+	cfg := &config.Config{}
+	baseTime := time.Now().Add(-2 * time.Hour)
+
+	store := &MockStorage{
+		changeEvents: []domain.ChangeEvent{
+			{
+				ID:               "evt-config",
+				ChangeType:       "configmap_update",
+				Timestamp:        baseTime,
+				AffectedServices: []string{"api"},
+			},
+			{
+				ID:               "evt-deploy",
+				ChangeType:       "deployment_rollout",
+				Timestamp:        baseTime.Add(5 * time.Minute),
+				AffectedServices: []string{"api"},
+			},
+		},
+	}
+
+	// Both events get the same metric results (high impact)
+	metrics := &ControllableMetrics{
+		Calls: []domain.MetricValues{
+			{RPS: 100, ErrorRate: 0.01}, // baseline for evt-config
+			{RPS: 50, ErrorRate: 0.10},  // impact for evt-config
+			{RPS: 100, ErrorRate: 0.01}, // baseline for evt-deploy
+			{RPS: 50, ErrorRate: 0.10},  // impact for evt-deploy
+		},
+	}
+
+	engine := correlator.NewEngine(store, metrics, cfg)
+	ranked, err := engine.RankChanges(context.Background(), "api", baseTime.Add(-10*time.Minute), baseTime.Add(20*time.Minute))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(ranked) != 2 {
+		t.Fatalf("expected 2 ranked changes, got %d", len(ranked))
+	}
+
+	// deployment_rollout has higher change_type_weight (1.0) than configmap_update (0.5)
+	// With similar impact scores, deployment should rank higher
+	if ranked[0].Rank != 1 || ranked[1].Rank != 2 {
+		t.Error("expected sequential ranks 1, 2")
+	}
+
+	if ranked[0].LikelihoodScore < ranked[1].LikelihoodScore {
+		t.Error("expected ranked[0] to have higher likelihood than ranked[1]")
+	}
+}
+
+func TestRankChanges_IndirectServiceScope(t *testing.T) {
+	cfg := &config.Config{}
+	eventTime := time.Now().Add(-2 * time.Hour)
+
+	store := &MockStorage{
+		changeEvents: []domain.ChangeEvent{
+			{
+				ID:               "evt-indirect",
+				ChangeType:       "deployment_rollout",
+				Timestamp:        eventTime,
+				AffectedServices: []string{"database"}, // not the queried service
+			},
+		},
+	}
+
+	metrics := &ControllableMetrics{
+		Calls: []domain.MetricValues{
+			{RPS: 100}, {RPS: 100},
+		},
+	}
+
+	engine := correlator.NewEngine(store, metrics, cfg)
+	ranked, err := engine.RankChanges(context.Background(), "api", eventTime.Add(-30*time.Minute), eventTime.Add(30*time.Minute))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(ranked) != 1 {
+		t.Fatalf("expected 1 ranked change, got %d", len(ranked))
+	}
+
+	if ranked[0].ServiceScope != 0.5 {
+		t.Errorf("expected service_scope 0.5 for indirect service, got %f", ranked[0].ServiceScope)
+	}
+}
+
+func TestRankChanges_PendingEvent(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Analysis.ImpactDur = 30 * time.Minute
+
+	// Event happened just now — impact window still open
+	eventTime := time.Now()
+	store := &MockStorage{
+		changeEvents: []domain.ChangeEvent{
+			{
+				ID:               "evt-pending",
+				ChangeType:       "deployment_rollout",
+				Timestamp:        eventTime,
+				AffectedServices: []string{"api"},
+			},
+		},
+	}
+
+	metrics := &ControllableMetrics{}
+	engine := correlator.NewEngine(store, metrics, cfg)
+
+	ranked, err := engine.RankChanges(context.Background(), "api", eventTime.Add(-10*time.Minute), eventTime.Add(10*time.Minute))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(ranked) != 1 {
+		t.Fatalf("expected 1 ranked change (pending), got %d", len(ranked))
+	}
+
+	if ranked[0].Analysis.ImpactLevel != "PENDING" {
+		t.Errorf("expected PENDING impact level, got %s", ranked[0].Analysis.ImpactLevel)
+	}
+}
+
+func TestAnalyzeImpact_AdditionalMetrics(t *testing.T) {
+	// Setup config with a custom metric set
+	cfg := &config.Config{}
+	cfg.Analysis.BaselineDur = 30 * time.Minute
+	cfg.Analysis.ImpactDur = 30 * time.Minute
+	cfg.Analysis.WeightsBuiltIn = map[string]float64{
+		"error_rate": 0.5,
+	}
+	cfg.Analysis.WeightsCustom = map[string]float64{
+		"custom_metric_a": 0.5,
+		"custom_metric_b": 0.5,
+	}
+
+	cfg.Prometheus.AdditionalMetrics = []config.PrometheusMetric{
+		{Name: "custom_metric_a", Query: "some_promql_query_a"},
+		{Name: "custom_metric_b", Query: "some_promql_query_b"},
+	}
+
+	store := &MockStorage{}
+
+	// Let's create two distinct AdditionalMetrics data for baseline and impact
+	baselineAdditional := map[string]float64{
+		"custom_metric_a": 10.0,
+		"custom_metric_b": 20.0,
+	}
+	impactAdditional := map[string]float64{
+		"custom_metric_a": 15.0, // Increased by 50% -> delta 0.5 -> norm 0.25
+		"custom_metric_b": 10.0, // Decreased by 50% -> delta -0.5 -> norm 0
+	}
+
+	metricsWithAdditional := &ControllableMetrics{
+		Calls: []domain.MetricValues{
+			// Baseline call
+			{ErrorRate: 0.01, LatencyP95: 100, RPS: 100, AdditionalMetrics: baselineAdditional},
+			// Impact call
+			{ErrorRate: 0.01, LatencyP95: 100, RPS: 100, AdditionalMetrics: impactAdditional},
+		},
+		AvailableMetrics: []domain.MetricInfo{{Name: "custom_metric_a"}, {Name: "custom_metric_b"}},
+	}
+
+	engine := correlator.NewEngine(store, metricsWithAdditional, cfg)
+
+	event := domain.ChangeEvent{
+		ID:        "evt-additional-metrics",
+		Timestamp: time.Now().Add(-1 * time.Hour),
+	}
+
+	analysis, err := engine.AnalyzeImpact(context.Background(), event)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Assertions for additional metrics
+	if analysis.BaselineMetrics.AdditionalMetrics["custom_metric_a"] != 10.0 {
+		t.Errorf("expected baseline custom_metric_a to be 10.0, got %f", analysis.BaselineMetrics.AdditionalMetrics["custom_metric_a"])
+	}
+	if analysis.ImpactMetrics.AdditionalMetrics["custom_metric_a"] != 15.0 {
+		t.Errorf("expected impact custom_metric_a to be 15.0, got %f", analysis.ImpactMetrics.AdditionalMetrics["custom_metric_a"])
+	}
+	if analysis.Deltas.AdditionalMetrics["custom_metric_a"] != 0.5 { // (15-10)/10 = 0.5
+		t.Errorf("expected delta custom_metric_a to be 0.5, got %f", analysis.Deltas.AdditionalMetrics["custom_metric_a"])
+	}
+
+	if analysis.Deltas.AdditionalMetrics["custom_metric_b"] != -0.5 { // (10-20)/20 = -0.5
+		t.Errorf("expected delta custom_metric_b to be -0.5, got %f", analysis.Deltas.AdditionalMetrics["custom_metric_b"])
+	}
+
+	// Score calculation
+	// error_rate delta is 0, score is 0.
+	// custom_metric_a delta is 0.5, norm score is 0.25
+	// custom_metric_b delta is -0.5, norm score is 0
+	// weights: error_rate: 0.5, custom_metric_a: 0.5, custom_metric_b: 0.5
+	// total weight = 0.5 + 0.5 + 0.5 = 1.5
+	// score = (0 * (0.5/1.5)) + (0.25 * (0.5/1.5)) + (0 * (0.5/1.5))
+	// score = 0.25 * (1/3) = 0.08333...
+	expectedScore := 0.08333333333333333
+	if analysis.ImpactScore < expectedScore-0.001 || analysis.ImpactScore > expectedScore+0.001 {
+		t.Errorf("expected score around %f, got %f", expectedScore, analysis.ImpactScore)
+	}
+
+	// Also test the GetAvailableMetrics()
+	availableMetrics := metricsWithAdditional.GetAvailableMetrics()
+	if len(availableMetrics) != 2 {
+		t.Errorf("expected 2 available metrics, got %d", len(availableMetrics))
+	}
+}
+
+func TestRankChanges_MultipleOverlappingEvents(t *testing.T) {
+	cfg := &config.Config{}
+	baseTime := time.Now().Add(-2 * time.Hour)
+
+	store := &MockStorage{
+		changeEvents: []domain.ChangeEvent{
+			{
+				ID:               "evt-1",
+				ChangeType:       "configmap_update",
+				Timestamp:        baseTime.Add(2 * time.Minute),
+				AffectedServices: []string{"api"},
+			},
+			{
+				ID:               "evt-2",
+				ChangeType:       "deployment_rollout",
+				Timestamp:        baseTime.Add(5 * time.Minute),
+				AffectedServices: []string{"api"},
+			},
+			{
+				ID:               "evt-3",
+				ChangeType:       "secret_update",
+				Timestamp:        baseTime.Add(3 * time.Minute),
+				AffectedServices: []string{"api"},
+			},
+		},
+	}
+
+	metrics := &ControllableMetrics{
+		Calls: []domain.MetricValues{
+			{RPS: 100, ErrorRate: 0.01}, // baseline evt-1
+			{RPS: 50, ErrorRate: 0.10},  // impact evt-1
+			{RPS: 100, ErrorRate: 0.01}, // baseline evt-2
+			{RPS: 50, ErrorRate: 0.10},  // impact evt-2
+			{RPS: 100, ErrorRate: 0.01}, // baseline evt-3
+			{RPS: 50, ErrorRate: 0.10},  // impact evt-3
+		},
+	}
+
+	engine := correlator.NewEngine(store, metrics, cfg)
+	ranked, err := engine.RankChanges(context.Background(), "api", baseTime, baseTime.Add(10*time.Minute))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(ranked) != 3 {
+		t.Fatalf("expected 3 ranked changes, got %d", len(ranked))
+	}
+
+	// Because deployment_rollout has change_type_weight=1.0, it should be top ranked usually
+	if ranked[0].Analysis.ChangeEvent.ID != "evt-2" {
+		t.Errorf("expected top rank to be evt-2 (deployment_rollout), got %s", ranked[0].Analysis.ChangeEvent.ID)
+	}
+}
+
+func TestRankChanges_PrometheusFailure(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Analysis.BaselineDur = 30 * time.Minute
+	cfg.Analysis.ImpactDur = 30 * time.Minute
+
+	store := &MockStorage{
+		changeEvents: []domain.ChangeEvent{
+			{
+				ID:               "evt-err",
+				ChangeType:       "deployment_rollout",
+				Timestamp:        time.Now().Add(-1 * time.Hour), // Window is closed
+				AffectedServices: []string{"api"},
+			},
+		},
+	}
+
+	// Mock metrics returns error
+	metrics := &ErrorMetrics{err: errors.New("prometheus connection refused")}
+	engine := correlator.NewEngine(store, metrics, cfg)
+
+	ranked, err := engine.RankChanges(context.Background(), "api", time.Now().Add(-2*time.Hour), time.Now())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(ranked) != 1 {
+		t.Fatalf("expected 1 ranked change even with prometheus failure, got %d", len(ranked))
+	}
+
+	if ranked[0].Analysis.ImpactLevel != "UNKNOWN" {
+		t.Errorf("expected ImpactLevel UNKNOWN, got %s", ranked[0].Analysis.ImpactLevel)
+	}
+
+	// Even though metrics failed, the event should still be ranked based on temporal/scope/type
+	if ranked[0].LikelihoodScore <= 0 {
+		t.Error("expected non-zero likelihood score due to change type and temporal factors")
+	}
 }
