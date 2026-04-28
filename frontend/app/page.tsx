@@ -2,8 +2,8 @@
 
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { ChangeEvent, EventsResponse, fetchChangeEvents, fetchServices, fetchNamespaces, fetchAvailableMetrics } from '@/lib/api'; // Added fetchAvailableMetrics
-import Timeline from '@/components/timeline/timeline';
-import { RefreshCcw, Filter, ExternalLink, ChevronDown, ChevronUp, Layers, Search, X, Zap, Info } from 'lucide-react'; // Added Info
+import Timeline, { ViewMode } from '@/components/timeline/timeline';
+import { RefreshCcw, Filter, ExternalLink, ChevronDown, ChevronUp, Layers, Search, X, Zap, Info, LayoutList, GitMerge } from 'lucide-react';
 import Link from 'next/link';
 import PromQLModal, { MetricInfo } from '@/components/promql-modal';
 
@@ -24,10 +24,11 @@ export default function Home() {
   const [searchQuery, setSearchQuery] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const abortControllerRef = useRef<AbortController | null>(null);
-  const [isPromQLModalOpen, setIsPromQLModalOpen] = useState(false); // New state for modal
+  const [isPromQLModalOpen, setIsPromQLModalOpen] = useState(false);
   const [builtinMetrics, setBuiltinMetrics] = useState<MetricInfo[]>([]);
   const [customMetrics, setCustomMetrics] = useState<MetricInfo[]>([]);
   const [loadingMetrics, setLoadingMetrics] = useState(true);
+  const [viewMode, setViewMode] = useState<ViewMode>('story');
 
   // Debounce search input
   useEffect(() => {
@@ -363,7 +364,7 @@ export default function Home() {
             <div className="text-center py-20 text-gray-400">Loading events...</div>
           ) : events.length > 0 ? (
             <>
-              <Timeline events={events} />
+              <Timeline events={events} viewMode={viewMode} />
 
               {hasMore && (
                 <div className="mt-8 text-center">
@@ -387,12 +388,40 @@ export default function Home() {
         </section>
       </div>
       {/* PromQL Metrics Modal */}
-              <PromQLModal
-                  isOpen={isPromQLModalOpen}
-                  onClose={() => setIsPromQLModalOpen(false)}
-                  metrics={builtinMetrics}
-                  customMetrics={customMetrics}
-              />
+      <PromQLModal
+        isOpen={isPromQLModalOpen}
+        onClose={() => setIsPromQLModalOpen(false)}
+        metrics={builtinMetrics}
+        customMetrics={customMetrics}
+      />
+
+      {/* View mode toggle FAB */}
+      <div className="fixed bottom-6 right-6 flex items-center bg-white border border-gray-200 rounded-full shadow-lg p-1 gap-1 z-50">
+        <button
+          onClick={() => setViewMode('classic')}
+          title="Classic card view"
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold transition-all ${
+            viewMode === 'classic'
+              ? 'bg-blue-600 text-white shadow-sm'
+              : 'text-gray-500 hover:bg-gray-100'
+          }`}
+        >
+          <LayoutList className="w-3.5 h-3.5" />
+          Classic
+        </button>
+        <button
+          onClick={() => setViewMode('story')}
+          title="Story view (correlated events grouped)"
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold transition-all ${
+            viewMode === 'story'
+              ? 'bg-blue-600 text-white shadow-sm'
+              : 'text-gray-500 hover:bg-gray-100'
+          }`}
+        >
+          <GitMerge className="w-3.5 h-3.5" />
+          Story
+        </button>
+      </div>
     </main>
   );
 }

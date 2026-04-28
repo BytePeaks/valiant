@@ -8,8 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Deployment Story timeline** — Correlated events (intent + execution) are now rendered as a single unified `DeploymentStoryCard` on the dashboard timeline. The card presents a horizontal pipeline — `CI Build → Image Push → K8s Rollout → Impact Score` — with each stage showing its own icon, summary, and metadata (git SHA, image tag, timestamp). The Impact Score stage hosts the Analyze button inline; once triggered, the full metric-delta grid expands below. A chevron toggle reveals extended detail (timestamps, blast radius, contextual links). Events without a linked intent continue to render as standard `TimelineEvent` cards.
 - **Analysis status badges in event timeline** — PENDING, READY, and ANALYZED status indicators now appear as header badges on each event card in the main timeline, making analysis state scannable at a glance without expanding cards or visiting detail pages.
 - **Live image diffing on deployment events** — Deployment and StatefulSet rollout cards now display an `old → new` image tag diff inline, showing exactly what changed without needing to cross-reference CI events. The Kubernetes collector tracks the previous image tag per workload and stores it as `previous_image_tag` in event metadata; the frontend renders the diff in a compact monospace row on each affected card.
+- **GitHub Actions example configs** — Three drop-in workflow snippets added under `example/github-actions/`: `ci-build-notify.yml` sends a CI intent event (`build_success`) after a successful build including `git_sha` and `image_tag` for linking; `deployment-notify.yml` sends a deployment execution event (`deployment_rollout`) with a precise `end_time` to anchor the impact window; `reusable-notify.yml` is a `workflow_call` reusable workflow that any pipeline can invoke with a single `uses:` reference for both event types.
 
 ## [1.0.0-alpha] - 2026-02-12
 

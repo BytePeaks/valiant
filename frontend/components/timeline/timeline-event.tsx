@@ -12,7 +12,8 @@ import BlastRadiusDisplay from './blast-radius';
 
 export default function TimelineEvent({ event }: TimelineEventProps) {
   const [analysis, setAnalysis] = useState<ImpactAnalysis | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(event.analysis_status === 'completed');
+  const [detailsExpanded, setDetailsExpanded] = useState(false);
   const [isMetricSelectionModalOpen, setIsMetricSelectionModalOpen] = useState(false);
   const [availableMetrics, setAvailableMetrics] = useState<MetricInfo[]>([]);
   const [selectedMetrics, setSelectedMetrics] = useState<Set<string>>(new Set(CORE_METRICS));
@@ -44,11 +45,22 @@ export default function TimelineEvent({ event }: TimelineEventProps) {
     );
   }, [selectedService]);
 
+  useEffect(() => {
+    if (isCompleted && !analysis) {
+      setLoading(true);
+      analyzeImpact(event.id)
+        .then(result => { setAnalysis(result); setDetailsExpanded(false); })
+        .catch(err => console.error(err))
+        .finally(() => setLoading(false));
+    }
+  }, [isCompleted, event.id]);
+
   const handleAnalyze = async () => {
     setLoading(true);
     try {
       const result = await analyzeImpact(event.id);
       setAnalysis(result);
+      setDetailsExpanded(true);
     } catch (err) {
       console.error(err);
     } finally {
@@ -245,10 +257,13 @@ export default function TimelineEvent({ event }: TimelineEventProps) {
         </div>
       </div>
 
-      {/* Analysis Section */}
+      {/* Analysis Section — score always visible once loaded, details collapsible */}
       {analysis && (
         <div className="mt-6 pt-6 border-t border-gray-100 animate-in fade-in slide-in-from-top-2 duration-300">
-          <div className="flex items-center p-4 bg-gray-50 rounded-xl mb-6 border border-gray-100">
+          <button
+            onClick={() => setDetailsExpanded(prev => !prev)}
+            className="w-full flex items-center p-4 bg-gray-50 rounded-xl mb-0 border border-gray-100 hover:bg-gray-100 transition-colors text-left"
+          >
             <div className="flex-1 text-center border-r border-gray-200">
               <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Impact Score</span>
               <div className={`text-2xl font-black mt-1 ${getImpactColor(analysis.impact_level)}`}>
@@ -262,7 +277,7 @@ export default function TimelineEvent({ event }: TimelineEventProps) {
                 {analysis.impact_level}
               </div>
             </div>
-            <div className="flex-1 text-center">
+            <div className="flex-1 text-center border-r border-gray-200">
               <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Confidence</span>
               <div className={`text-xl font-black mt-1 flex items-center justify-center gap-1 ${analysis.confidence_score > 0.7 ? 'text-emerald-600' : 'text-orange-500'}`}>
                 <ShieldCheck className="w-3 h-3" />
@@ -270,71 +285,77 @@ export default function TimelineEvent({ event }: TimelineEventProps) {
                 <span className="text-xs text-gray-400 font-normal">%</span>
               </div>
             </div>
-          </div>
-          <div>
-            {event.affected_services.length > 1 && (
-              <div className="mb-4 flex items-center flex-wrap">
-                <span className="text-sm font-bold text-gray-500 mr-2">Service:</span>
-                <div className="flex flex-wrap gap-2">
-                  {event.affected_services.map(service => (
-                    <button
-                      key={service}
-                      onClick={() => setSelectedService(service)}
-                      className={`flex items-center gap-1 px-2 py-0.5 text-xs font-bold rounded-md ${selectedService === service ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-700'}`}
-                    >
-                      <Tag className="w-2 h-2" />
-                      {service}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-            <div className="flex justify-between items-center mb-3">
-              <h4 className="text-xs font-bold text-gray-400 uppercase tracking-widest flex items-center gap-2">
-                <Activity className="w-3 h-3" />
-                Metric Shifts (vs Baseline)
-              </h4>
-              <div className="relative group/button">
-                <button
-                  onClick={handleCustomizeClick}
-                  className="flex items-center gap-2 px-3 py-1 bg-gray-100 text-gray-600 text-xs font-bold rounded-lg hover:bg-gray-200 transition-all border border-gray-200"
-                >
-                  <Settings2 className="w-3 h-3" />
-                  Customize
-                </button>
-                <div className="absolute bottom-full mb-2 hidden group-hover/button:block w-48 p-2 bg-gray-900 text-white text-[10px] rounded shadow-lg z-10 text-center pointer-events-none">
-                  Choose which metrics are displayed. These preferences are saved for this service.
-                  <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-gray-900"></div>
-                </div>
-              </div>
+            <div className="pl-4 text-gray-400 text-[10px] font-bold uppercase tracking-widest flex items-center gap-1">
+              {detailsExpanded ? '▲ Hide' : '▼ Details'}
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 mb-6">
-              {metricsToRender.map(metricName => {
-                const metricInfo = availableMetrics.find(m => m.name === metricName);
-                const allDeltas: Record<string, number> = {
-                  error_rate: analysis.deltas.error_rate,
-                  latency_p95_ms: analysis.deltas.latency_p95_ms,
-                  rps: analysis.deltas.rps,
-                  cpu: analysis.deltas.cpu,
-                  memory: analysis.deltas.memory,
-                  ...analysis.deltas.additional_metrics,
-                };
-                const deltaValue = allDeltas[metricName] || 0;
-                const config = METRIC_CONFIG[metricName] || { label: metricName, description: `Custom metric: ${metricName}` };
+          </button>
 
-                return (
-                  <MetricDelta
-                    key={metricName}
-                    label={config.label}
-                    delta={deltaValue}
-                    icon={getIcon(metricInfo?.icon)}
-                    description={config.description}
-                    reverse={config.reverse}
-                  />
-                );
-              })}
+          {detailsExpanded && (
+            <div className="mt-4">
+              {event.affected_services.length > 1 && (
+                <div className="mb-4 flex items-center flex-wrap">
+                  <span className="text-sm font-bold text-gray-500 mr-2">Service:</span>
+                  <div className="flex flex-wrap gap-2">
+                    {event.affected_services.map(service => (
+                      <button
+                        key={service}
+                        onClick={() => setSelectedService(service)}
+                        className={`flex items-center gap-1 px-2 py-0.5 text-xs font-bold rounded-md ${selectedService === service ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-700'}`}
+                      >
+                        <Tag className="w-2 h-2" />
+                        {service}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+              <div className="flex justify-between items-center mb-3">
+                <h4 className="text-xs font-bold text-gray-400 uppercase tracking-widest flex items-center gap-2">
+                  <Activity className="w-3 h-3" />
+                  Metric Shifts (vs Baseline)
+                </h4>
+                <div className="relative group/button">
+                  <button
+                    onClick={handleCustomizeClick}
+                    className="flex items-center gap-2 px-3 py-1 bg-gray-100 text-gray-600 text-xs font-bold rounded-lg hover:bg-gray-200 transition-all border border-gray-200"
+                  >
+                    <Settings2 className="w-3 h-3" />
+                    Customize
+                  </button>
+                  <div className="absolute bottom-full mb-2 hidden group-hover/button:block w-48 p-2 bg-gray-900 text-white text-[10px] rounded shadow-lg z-10 text-center pointer-events-none">
+                    Choose which metrics are displayed. These preferences are saved for this service.
+                    <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-gray-900"></div>
+                  </div>
+                </div>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 mb-6">
+                {metricsToRender.map(metricName => {
+                  const metricInfo = availableMetrics.find(m => m.name === metricName);
+                  const allDeltas: Record<string, number> = {
+                    error_rate: analysis.deltas.error_rate,
+                    latency_p95_ms: analysis.deltas.latency_p95_ms,
+                    rps: analysis.deltas.rps,
+                    cpu: analysis.deltas.cpu,
+                    memory: analysis.deltas.memory,
+                    ...analysis.deltas.additional_metrics,
+                  };
+                  const deltaValue = allDeltas[metricName] || 0;
+                  const config = METRIC_CONFIG[metricName] || { label: metricName, description: `Custom metric: ${metricName}` };
+
+                  return (
+                    <MetricDelta
+                      key={metricName}
+                      label={config.label}
+                      delta={deltaValue}
+                      icon={getIcon(metricInfo?.icon)}
+                      description={config.description}
+                      reverse={config.reverse}
+                    />
+                  );
+                })}
+              </div>
             </div>
-          </div>
+          )}
         </div>
       )}
 
