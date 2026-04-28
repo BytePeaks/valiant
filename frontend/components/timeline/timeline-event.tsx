@@ -189,13 +189,6 @@ export default function TimelineEvent({ event }: TimelineEventProps) {
                   </span>
                 )}
               </div>
-              {event.link_reason && (
-                <div className="flex items-center gap-2 text-[11px] text-gray-400 ml-5">
-                  <span className="text-gray-400 truncate max-w-md" title={event.link_reason}>
-                    {event.link_reason}
-                  </span>
-                </div>
-              )}
             </div>
           )}
           {/* Live diff: show old → new image tag for rollout events */}
