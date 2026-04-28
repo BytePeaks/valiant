@@ -27,21 +27,21 @@ type WorkloadReferences struct {
 }
 
 type KubernetesCollector struct {
-	clientset          kubernetes.Interface
-	kubeConfigPath     string
-	namespaces         []string
-	requireAnnot       bool
-	allowedSources     []string
-	watchConfigMaps    bool
-	watchSecrets       bool
-	lastProcessed       map[string]int64  // map["ns/name"]generation (Deployments)
-	lastProcessedSha    map[string]string // map["ns/name"]fingerprint (Deployments)
-	lastProcessedImage  map[string]string // map["ns/name"]image tag (Deployments)
-	lastProcessedSS     map[string]int64  // map["ns/name"]generation (StatefulSets)
-	lastProcessedSSSha  map[string]string // map["ns/name"]fingerprint (StatefulSets)
+	clientset            kubernetes.Interface
+	kubeConfigPath       string
+	namespaces           []string
+	requireAnnot         bool
+	allowedSources       []string
+	watchConfigMaps      bool
+	watchSecrets         bool
+	lastProcessed        map[string]int64  // map["ns/name"]generation (Deployments)
+	lastProcessedSha     map[string]string // map["ns/name"]fingerprint (Deployments)
+	lastProcessedImage   map[string]string // map["ns/name"]image tag (Deployments)
+	lastProcessedSS      map[string]int64  // map["ns/name"]generation (StatefulSets)
+	lastProcessedSSSha   map[string]string // map["ns/name"]fingerprint (StatefulSets)
 	lastProcessedSSImage map[string]string // map["ns/name"]image tag (StatefulSets)
-	lastConfigMapHash   map[string]string // map["ns/name"]sha256 of .data
-	lastSecretHash      map[string]string // map["ns/name"]sha256 of .data
+	lastConfigMapHash    map[string]string // map["ns/name"]sha256 of .data
+	lastSecretHash       map[string]string // map["ns/name"]sha256 of .data
 }
 
 func NewKubernetesCollector(cfg config.Config, clientset kubernetes.Interface) (*KubernetesCollector, error) {
@@ -66,13 +66,13 @@ func NewKubernetesCollector(cfg config.Config, clientset kubernetes.Interface) (
 	}
 
 	return &KubernetesCollector{
-		clientset:          clientset,
-		kubeConfigPath:     cfg.Kubernetes.KubeConfigPath,
-		namespaces:         cfg.Kubernetes.Namespaces,
-		requireAnnot:       cfg.Kubernetes.RequireAnnotation,
-		allowedSources:     cfg.Kubernetes.AllowedSources,
-		watchConfigMaps:    cfg.Kubernetes.WatchConfigMaps,
-		watchSecrets:       cfg.Kubernetes.WatchSecrets,
+		clientset:            clientset,
+		kubeConfigPath:       cfg.Kubernetes.KubeConfigPath,
+		namespaces:           cfg.Kubernetes.Namespaces,
+		requireAnnot:         cfg.Kubernetes.RequireAnnotation,
+		allowedSources:       cfg.Kubernetes.AllowedSources,
+		watchConfigMaps:      cfg.Kubernetes.WatchConfigMaps,
+		watchSecrets:         cfg.Kubernetes.WatchSecrets,
 		lastProcessed:        make(map[string]int64),
 		lastProcessedSha:     make(map[string]string),
 		lastProcessedImage:   make(map[string]string),
