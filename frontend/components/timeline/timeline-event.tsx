@@ -1,6 +1,6 @@
 
 import { useState, useEffect } from 'react';
-import { Clock, Zap, GitBranch, Box, Bot, Info, Hourglass, Loader2, Tag, ShieldCheck, Settings2, Activity, ExternalLink, Link2, Rocket, Webhook, Hand } from 'lucide-react';
+import { Clock, Zap, GitBranch, Box, Bot, Info, Hourglass, Loader2, Tag, ShieldCheck, Settings2, Activity, ExternalLink, Link2, Rocket, Webhook, Hand, ArrowRight } from 'lucide-react';
 import { timeAgo, getImpactColor } from '../../lib/utils';
 import type { ChangeEvent, ImpactAnalysis, TimelineEventProps } from '../../lib/api';
 import type { MetricInfo } from '../promql-modal';
@@ -196,6 +196,20 @@ export default function TimelineEvent({ event }: TimelineEventProps) {
                   </span>
                 </div>
               )}
+            </div>
+          )}
+          {/* Live diff: show old → new image tag for rollout events */}
+          {(event.change_type === 'deployment_rollout' || event.change_type === 'statefulset_rollout') &&
+            event.metadata?.previous_image_tag && event.metadata?.image_tag && (
+            <div className="flex items-center gap-2 mt-1 text-[11px] text-gray-500 font-mono">
+              <ArrowRight className="w-3 h-3 text-blue-400 shrink-0" />
+              <span className="truncate max-w-[200px] text-gray-400" title={event.metadata.previous_image_tag}>
+                {event.metadata.previous_image_tag}
+              </span>
+              <ArrowRight className="w-3 h-3 text-blue-500 shrink-0" />
+              <span className="truncate max-w-[200px] text-emerald-600 font-semibold" title={event.metadata.image_tag}>
+                {event.metadata.image_tag}
+              </span>
             </div>
           )}
         </div>

@@ -34,12 +34,14 @@ type KubernetesCollector struct {
 	allowedSources     []string
 	watchConfigMaps    bool
 	watchSecrets       bool
-	lastProcessed      map[string]int64  // map["ns/name"]generation (Deployments)
-	lastProcessedSha   map[string]string // map["ns/name"]fingerprint (Deployments)
-	lastProcessedSS    map[string]int64  // map["ns/name"]generation (StatefulSets)
-	lastProcessedSSSha map[string]string // map["ns/name"]fingerprint (StatefulSets)
-	lastConfigMapHash  map[string]string // map["ns/name"]sha256 of .data
-	lastSecretHash     map[string]string // map["ns/name"]sha256 of .data
+	lastProcessed       map[string]int64  // map["ns/name"]generation (Deployments)
+	lastProcessedSha    map[string]string // map["ns/name"]fingerprint (Deployments)
+	lastProcessedImage  map[string]string // map["ns/name"]image tag (Deployments)
+	lastProcessedSS     map[string]int64  // map["ns/name"]generation (StatefulSets)
+	lastProcessedSSSha  map[string]string // map["ns/name"]fingerprint (StatefulSets)
+	lastProcessedSSImage map[string]string // map["ns/name"]image tag (StatefulSets)
+	lastConfigMapHash   map[string]string // map["ns/name"]sha256 of .data
+	lastSecretHash      map[string]string // map["ns/name"]sha256 of .data
 }
 
 func NewKubernetesCollector(cfg config.Config, clientset kubernetes.Interface) (*KubernetesCollector, error) {
@@ -71,12 +73,14 @@ func NewKubernetesCollector(cfg config.Config, clientset kubernetes.Interface) (
 		allowedSources:     cfg.Kubernetes.AllowedSources,
 		watchConfigMaps:    cfg.Kubernetes.WatchConfigMaps,
 		watchSecrets:       cfg.Kubernetes.WatchSecrets,
-		lastProcessed:      make(map[string]int64),
-		lastProcessedSha:   make(map[string]string),
-		lastProcessedSS:    make(map[string]int64),
-		lastProcessedSSSha: make(map[string]string),
-		lastConfigMapHash:  make(map[string]string),
-		lastSecretHash:     make(map[string]string),
+		lastProcessed:        make(map[string]int64),
+		lastProcessedSha:     make(map[string]string),
+		lastProcessedImage:   make(map[string]string),
+		lastProcessedSS:      make(map[string]int64),
+		lastProcessedSSSha:   make(map[string]string),
+		lastProcessedSSImage: make(map[string]string),
+		lastConfigMapHash:    make(map[string]string),
+		lastSecretHash:       make(map[string]string),
 	}, nil
 }
 
@@ -263,6 +267,24 @@ func (c *KubernetesCollector) CollectAndSend(ctx context.Context, eventChan chan
 
 			rolloutEndTime := availableCond.LastUpdateTime.Time
 			image, containerName := SelectAppContainer(d.Spec.Template.Spec.Containers, d.Annotations)
+			previousImage := c.lastProcessedImage[key]
+
+			metadata := map[string]string{
+				"env":            d.Namespace,
+				"namespace":      d.Namespace,
+				"kind":           "Deployment",
+				"generation":     fmt.Sprintf("%d", d.Generation),
+				"image":          image,
+				"image_tag":      image,
+				"container_name": containerName,
+				"intent_source":  source,
+				"git_commit_sha": gitSha,
+				"rollout_start":  rolloutStartTime.Format(time.RFC3339),
+				"rollout_end":    rolloutEndTime.Format(time.RFC3339),
+			}
+			if previousImage != "" && previousImage != image {
+				metadata["previous_image_tag"] = previousImage
+			}
 
 			eventChan <- domain.ChangeEvent{
 				ID:               fmt.Sprintf("k8s-%s-%s-%d", d.Namespace, d.Name, d.Generation),
@@ -276,21 +298,10 @@ func (c *KubernetesCollector) CollectAndSend(ctx context.Context, eventChan chan
 				EndTime:          &rolloutEndTime,
 				AffectedServices: []string{d.Name},
 				Summary:          fmt.Sprintf("Deployment %s rollout completed via %s", d.Name, source),
-				Metadata: map[string]string{
-					"env":            d.Namespace,
-					"namespace":      d.Namespace,
-					"kind":           "Deployment",
-					"generation":     fmt.Sprintf("%d", d.Generation),
-					"image":          image,
-					"image_tag":      image,
-					"container_name": containerName,
-					"intent_source":  source,
-					"git_commit_sha": gitSha,
-					"rollout_start":  rolloutStartTime.Format(time.RFC3339),
-					"rollout_end":    rolloutEndTime.Format(time.RFC3339),
-				},
+				Metadata:         metadata,
 			}
 			c.lastProcessed[key] = d.Generation
+			c.lastProcessedImage[key] = image
 			if gitSha != "" {
 				c.lastProcessedSha[key] = gitSha
 			}
@@ -368,6 +379,23 @@ func (c *KubernetesCollector) CollectAndSend(ctx context.Context, eventChan chan
 		rolloutEndTime := time.Now()
 
 		image, containerName := SelectAppContainer(ss.Spec.Template.Spec.Containers, ss.Annotations)
+		previousImage := c.lastProcessedSSImage[key]
+
+		ssMetadata := map[string]string{
+			"env":             ss.Namespace,
+			"namespace":       ss.Namespace,
+			"kind":            "StatefulSet",
+			"generation":      fmt.Sprintf("%d", ss.Generation),
+			"image":           image,
+			"image_tag":       image,
+			"container_name":  containerName,
+			"intent_source":   source,
+			"git_commit_sha":  gitSha,
+			"update_revision": ss.Status.UpdateRevision,
+		}
+		if previousImage != "" && previousImage != image {
+			ssMetadata["previous_image_tag"] = previousImage
+		}
 
 		eventChan <- domain.ChangeEvent{
 			ID:               fmt.Sprintf("k8s-%s-%s-%d", ss.Namespace, ss.Name, ss.Generation),
@@ -381,20 +409,10 @@ func (c *KubernetesCollector) CollectAndSend(ctx context.Context, eventChan chan
 			EndTime:          &rolloutEndTime,
 			AffectedServices: []string{ss.Name},
 			Summary:          fmt.Sprintf("StatefulSet %s rollout completed via %s", ss.Name, source),
-			Metadata: map[string]string{
-				"env":             ss.Namespace,
-				"namespace":       ss.Namespace,
-				"kind":            "StatefulSet",
-				"generation":      fmt.Sprintf("%d", ss.Generation),
-				"image":           image,
-				"image_tag":       image,
-				"container_name":  containerName,
-				"intent_source":   source,
-				"git_commit_sha":  gitSha,
-				"update_revision": ss.Status.UpdateRevision,
-			},
+			Metadata:         ssMetadata,
 		}
 		c.lastProcessedSS[key] = ss.Generation
+		c.lastProcessedSSImage[key] = image
 		if gitSha != "" {
 			c.lastProcessedSSSha[key] = gitSha
 		}
