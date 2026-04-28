@@ -43,7 +43,7 @@ Responsibilities:
 
 ### Frontend (Next.js)
 
-Next.js 16 app directory structure with React 19, TypeScript (strict mode), and Tailwind CSS.
+Next.js 16 app directory structure with React 18, TypeScript (strict mode), and Tailwind CSS.
 
 Responsibilities:
 - Dashboard with timeline visualization of change events

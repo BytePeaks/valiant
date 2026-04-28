@@ -66,7 +66,7 @@ An event is marked orphaned when Valiant can't find a matching CI (intent) event
 
 **What it means**: An execution event is correlated with a CI build that didn't actually produce the deployed artifact.
 
-**Why it happens**: This typically occurs when using **mutable image tags** (`:latest`, `:staging`, `:dev`). Multiple CI builds produce different images under the same tag, so Valiant's `image_tag_match` (0.9 confidence) links to whichever CI event has the matching tag — which may be the wrong build.
+**Why it happens**: This typically occurs when using **mutable image tags** (`:latest`, `:staging`, `:dev`). Multiple CI builds produce different images under the same tag, so Valiant's `image_tag_match` (0.9 confidence) links to whichever CI event has the matching tag - which may be the wrong build.
 
 **To fix**:
 - Switch to **immutable tags** (semver, commit SHA, build number) for production deployments

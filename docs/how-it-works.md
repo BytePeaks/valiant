@@ -109,7 +109,7 @@ A secondary score (0.0-1.0) indicates how statistically reliable the analysis is
 
 ## Intent-Execution Linking
 
-When Valiant encounters an **Execution** event (e.g., a K8s deployment), it looks backward within a configurable correlation window (default `1h`) for a matching **Intent** event (e.g., a CI build) using shared metadata. Linking is **eager** — it runs immediately when an event arrives, in both directions (execution looking for intent, and intent looking for execution).
+When Valiant encounters an **Execution** event (e.g., a K8s deployment), it looks backward within a configurable correlation window (default `1h`) for a matching **Intent** event (e.g., a CI build) using shared metadata. Linking is **eager** - it runs immediately when an event arrives, in both directions (execution looking for intent, and intent looking for execution).
 
 ### Confidence Ladder
 
@@ -123,7 +123,7 @@ Valiant tries three matching tiers in order, from most to least precise:
 
 Every link includes a human-readable `reason` in its metadata for explainability (e.g., `"Exact image_tag match: registry/app:abc123"`).
 
-Higher tiers take priority — if a `sha_match` (1.0) exists, `image_tag_match` and `image_sha_inferred` are not created for the same pair.
+Higher tiers take priority - if a `sha_match` (1.0) exists, `image_tag_match` and `image_sha_inferred` are not created for the same pair.
 
 ### Zero-Config Linking
 
@@ -134,11 +134,11 @@ Tiers 2 and 3 require **no Kubernetes-side annotations**. The K8s collector auto
 
 ### Orphan Detection
 
-If no matching intent event is found across all three tiers, the execution is marked as **orphaned** — meaning it happened without a corresponding CI signal. This helps identify unexpected or undocumented changes.
+If no matching intent event is found across all three tiers, the execution is marked as **orphaned** - meaning it happened without a corresponding CI signal. This helps identify unexpected or undocumented changes.
 
 ### Rollback Semantics
 
-A rollback in Kubernetes increments the Deployment's `generation`, producing a **new execution event** even if the image SHA matches a previously deployed version. Valiant treats rollbacks as regular deployments — there is no explicit `is_rollback` field.
+A rollback in Kubernetes increments the Deployment's `generation`, producing a **new execution event** even if the image SHA matches a previously deployed version. Valiant treats rollbacks as regular deployments - there is no explicit `is_rollback` field.
 
 When a rollback's image tag matches multiple past intent events (e.g., you deployed `v1.2.3` last week and again today), the **closest-in-time** intent is linked. Only one link is created per tier, preventing ambiguous many-to-one mappings.
 
@@ -146,7 +146,7 @@ When a rollback's image tag matches multiple past intent events (e.g., you deplo
 
 > **Warning**: Mutable image tags (`:latest`, `:staging`, `:dev`) degrade correlation reliability.
 
-When multiple distinct builds share the same tag string, the `image_tag_match` tier (0.9 confidence) becomes **probabilistic rather than deterministic** — a link may point to the wrong CI build. This produces false-positive correlations that are difficult to detect.
+When multiple distinct builds share the same tag string, the `image_tag_match` tier (0.9 confidence) becomes **probabilistic rather than deterministic** - a link may point to the wrong CI build. This produces false-positive correlations that are difficult to detect.
 
 **Recommendation**: Use **immutable tags** for production deployments:
 - Semantic versions: `app:v1.2.3`

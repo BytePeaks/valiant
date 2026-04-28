@@ -138,7 +138,7 @@ Valiant now has two `ChangeEvent`s:
     *   `metadata.env`: `"default"` (namespace, used for filtering)
     *   `metadata.git_commit_sha`: `"a1b2c3d..."` (from `valiant.io/git-sha` annotation)
 
-The `correlator` engine links these two events because **both the `service` name and the `git_commit_sha` match** (`sha_match` at 1.0 confidence). Even without the `valiant.io/git-sha` annotation, they would still link via the **matching `image_tag`** (`image_tag_match` at 0.9 confidence) — this is the zero-config path.
+The `correlator` engine links these two events because **both the `service` name and the `git_commit_sha` match** (`sha_match` at 1.0 confidence). Even without the `valiant.io/git-sha` annotation, they would still link via the **matching `image_tag`** (`image_tag_match` at 0.9 confidence) - this is the zero-config path.
 
 ---
 
@@ -344,4 +344,4 @@ For successful linking, ensure these fields align across your systems:
 | `trigger_type` (string) | `valiant.io/source` (annotation) | The source system (e.g., "argocd", "helm", "kubernetes-api"). Sets the `trigger_type` for K8s events. |
 | `metadata.<url_field>` (string) | N/A | **Deeplinking:** Any URL (e.g., `github_run_url`, `jenkins_build_url`) in metadata for direct navigation from Valiant's UI to external systems. Check [config.yaml](../example/config.yaml) section `Linking Configuration`. |
 
-**Zero-config path:** Tiers 2 and 3 (`image_tag_match` and `image_sha_inferred`) require no K8s annotations — the collector auto-extracts `image_tag` from the container spec. Only tier 1 (`sha_match`) requires the `valiant.io/git-sha` annotation.
+**Zero-config path:** Tiers 2 and 3 (`image_tag_match` and `image_sha_inferred`) require no K8s annotations - the collector auto-extracts `image_tag` from the container spec. Only tier 1 (`sha_match`) requires the `valiant.io/git-sha` annotation.

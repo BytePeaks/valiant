@@ -70,7 +70,7 @@ For deploying to a Kubernetes or OpenShift cluster:
 
 ```bash
 # Apply the manifests (adjust namespace as needed)
-kubectl apply -k deploy/
+kubectl apply -k deploy/kubernetes/
 ```
 
 Ensure the backend has:

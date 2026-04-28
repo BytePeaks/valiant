@@ -192,7 +192,7 @@ List all services that have at least one change event.
 
 | Parameter | Type | Description |
 |:----------|:-----|:------------|
-| `namespace` | string | Filter by Kubernetes namespace. When `kubernetes.namespaces` is configured, the namespace is validated against the config — unconfigured namespaces return an empty list. |
+| `namespace` | string | Filter by Kubernetes namespace. When `kubernetes.namespaces` is configured, the namespace is validated against the config - unconfigured namespaces return an empty list. |
 | `linked_only` | string | Set to `"true"` to return only services that have intent-execution links (`sha_match`, `image_tag_match`, or `image_sha_inferred`). |
 
 **Response:** `200 OK`

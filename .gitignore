@@ -57,10 +57,102 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
-# Other
-GEMINI.md
-CLAUDE.md
-
 # Temporary
 tmp/
 tmp/*
+
+# === AI Coding Assistants / LLM Tooling ===
+
+# --- Anthropic Claude ---
+CLAUDE.md
+.claude/
+.claude.json
+.claude-cache/
+.claude_history/
+
+# --- Google Gemini / AI Studio ---
+GEMINI.md
+.gemini/
+.gemini.json
+.gemini-cache/
+
+# --- OpenAI / ChatGPT / Codex style ---
+.openai/
+.openai.json
+.prompt/
+.prompts/
+*.prompt.md
+*.prompt.txt
+
+# --- Cursor IDE ---
+.cursor/
+.cursorignore
+.cursor-tmp/
+.cursor-cache/
+
+# --- GitHub Copilot ---
+.github/copilot/
+.copilot/
+copilot/
+.vscode/copilot.json
+
+# --- Codeium ---
+.codeium/
+codeium/
+
+# --- Tabnine ---
+.tabnine/
+TabNine/
+
+# --- Replit Ghostwriter ---
+.replit-ai/
+.replit-ghostwriter/
+
+# --- Sourcegraph Cody ---
+.cody/
+.sourcegraph/
+
+# --- Continue.dev ---
+.continue/
+continue/
+
+# --- Aider ---
+.aider*
+.aider/
+.aider.chat.history.md
+
+# --- Generic AI artifacts ---
+ai/
+.ai/
+.llm/
+.llm-cache/
+.llm-logs/
+.llm-state/
+.llm-history/
+
+# --- Prompt engineering / scratch ---
+prompts/
+prompt/
+ai-prompts/
+*.prompt
+*.prompts
+
+# --- Session / conversation dumps ---
+*.chat.md
+*.chat.json
+*.conversation
+*.session
+*.history
+
+# --- Temporary / generated ---
+*.ai.tmp
+*.gen.md
+*.generated.*
+*.llm.txt
+
+# --- Secrets / tokens (AI tools often drop these) ---
+*.openai
+*.anthropic
+*.apikey
+.env.ai
+.env.llm
