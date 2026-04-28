@@ -1,0 +1,99 @@
+# Drop-in snippet: report a Kubernetes deployment to Valiant as an execution event.
+#
+# Copy this file to .github/workflows/valiant-deploy-notify.yml in your repository.
+# Required repository secrets:
+#   VALIANT_URL  - Base URL of your Valiant instance, e.g. https://valiant.internal
+#
+# Trigger this workflow after your kubectl/Helm deploy step completes.
+# Valiant links the image_tag back to the CI intent event that built it.
+# The end_time field anchors the impact window – always set it to the moment
+# the rollout finishes, not when the deploy command was issued.
+
+name: Notify Valiant – Deployment
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Docker image tag that was deployed (defaults to current SHA)"
+        required: false
+        default: ""
+      namespace:
+        description: "Kubernetes namespace"
+        required: false
+        default: "default"
+      service_name:
+        description: "Kubernetes service / deployment name (defaults to repo name)"
+        required: false
+        default: ""
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    outputs:
+      deploy_end: ${{ steps.deploy.outputs.deploy_end }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # ── Replace with your actual deploy steps ──────────────────────────────
+      - name: Deploy to Kubernetes
+        id: deploy
+        run: |
+          echo "Deploying..."
+          # kubectl set image deployment/my-app my-app=myrepo/myimage:${IMAGE_TAG}
+          # kubectl rollout status deployment/my-app --namespace=${NAMESPACE} --timeout=5m
+          # OR: helm upgrade --install my-app ./chart --set image.tag=${IMAGE_TAG}
+
+          # Record the moment the rollout finishes — Valiant uses this to anchor
+          # the impact window (baseline before, impact after).
+          echo "deploy_end=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+      # ───────────────────────────────────────────────────────────────────────
+
+  notify-valiant:
+    needs: deploy
+    runs-on: ubuntu-latest
+    if: success()
+    steps:
+      - name: Send deployment execution event to Valiant
+        env:
+          VALIANT_URL: ${{ secrets.VALIANT_URL }}
+        run: |
+          SERVICE_NAME="${{ github.event.inputs.service_name }}"
+          if [ -z "${SERVICE_NAME}" ]; then
+            SERVICE_NAME="${GITHUB_REPOSITORY##*/}"
+          fi
+
+          IMAGE_TAG="${{ github.event.inputs.image_tag }}"
+          if [ -z "${IMAGE_TAG}" ]; then
+            IMAGE_TAG="${GITHUB_SHA}"
+          fi
+
+          NAMESPACE="${{ github.event.inputs.namespace }}"
+          DEPLOY_END="${{ needs.deploy.outputs.deploy_end }}"
+          DEPLOY_START="$(date -u -d '5 minutes ago' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+          curl --fail --silent --show-error \
+            --request POST \
+            --url "${VALIANT_URL}/api/v1/events" \
+            --header "Content-Type: application/json" \
+            --data @- <<EOF
+          {
+            "id":                "${GITHUB_RUN_ID}-deploy-${GITHUB_SHA}",
+            "trigger_type":      "GitOps",
+            "execution_id":      "${GITHUB_RUN_ID}",
+            "change_type":       "deployment_rollout",
+            "timestamp":         "${DEPLOY_START}",
+            "end_time":          "${DEPLOY_END}",
+            "affected_services": ["${SERVICE_NAME}"],
+            "summary":           "Deployed ${SERVICE_NAME}:${IMAGE_TAG:0:7} to ${NAMESPACE}",
+            "metadata": {
+              "git_sha":         "${GITHUB_SHA}",
+              "image_tag":       "${IMAGE_TAG}",
+              "namespace":       "${NAMESPACE}",
+              "branch":          "${GITHUB_REF_NAME}",
+              "author":          "${GITHUB_ACTOR}",
+              "deploy_url":      "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}",
+              "repository":      "${GITHUB_REPOSITORY}"
+            }
+          }
+          EOF

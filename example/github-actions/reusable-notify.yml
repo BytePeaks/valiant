@@ -1,0 +1,127 @@
+# Reusable workflow: send any Valiant event from any pipeline with a single `uses:` call.
+#
+# Host this file at .github/workflows/valiant-notify.yml in a shared repository
+# (or in the same repo) and call it with `uses:`.
+#
+# Required repository / organisation secret:
+#   VALIANT_URL  - Base URL of your Valiant instance, e.g. https://valiant.internal
+#
+# ── Caller example (CI intent) ───────────────────────────────────────────────
+#
+#   notify:
+#     needs: build
+#     uses: your-org/your-repo/.github/workflows/valiant-notify.yml@main
+#     secrets: inherit
+#     with:
+#       trigger_type:  "CI"
+#       change_type:   "build_success"
+#       service_name:  "payment-service"
+#       image_tag:     ${{ needs.build.outputs.image_tag }}
+#       summary:       "CI build succeeded for payment-service"
+#
+# ── Caller example (deployment execution) ────────────────────────────────────
+#
+#   notify:
+#     needs: deploy
+#     uses: your-org/your-repo/.github/workflows/valiant-notify.yml@main
+#     secrets: inherit
+#     with:
+#       trigger_type:  "GitOps"
+#       change_type:   "deployment_rollout"
+#       service_name:  "payment-service"
+#       namespace:     "production"
+#       image_tag:     ${{ needs.build.outputs.image_tag }}
+#       end_time:      ${{ needs.deploy.outputs.deploy_end }}
+#       summary:       "Deployed payment-service to production"
+#
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: Valiant – Notify (Reusable)
+
+on:
+  workflow_call:
+    inputs:
+      trigger_type:
+        description: "'CI' for build/intent events, 'GitOps' for deployment/execution events"
+        type: string
+        required: true
+      change_type:
+        description: "'build_success' or 'deployment_rollout'"
+        type: string
+        required: true
+      service_name:
+        description: "Name of the affected service"
+        type: string
+        required: true
+      image_tag:
+        description: "Docker image tag (used for CI↔deploy linking)"
+        type: string
+        required: false
+        default: ""
+      namespace:
+        description: "Kubernetes namespace (deployment events)"
+        type: string
+        required: false
+        default: "default"
+      end_time:
+        description: "RFC3339 rollout completion time (deployment events only)"
+        type: string
+        required: false
+        default: ""
+      summary:
+        description: "Human-readable summary shown in the Valiant UI"
+        type: string
+        required: false
+        default: ""
+    secrets:
+      VALIANT_URL:
+        required: true
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send event to Valiant
+        run: |
+          IMAGE_TAG="${{ inputs.image_tag }}"
+          if [ -z "${IMAGE_TAG}" ]; then
+            IMAGE_TAG="${GITHUB_SHA}"
+          fi
+
+          SUMMARY="${{ inputs.summary }}"
+          if [ -z "${SUMMARY}" ]; then
+            SUMMARY="${{ inputs.change_type }} for ${{ inputs.service_name }} at ${GITHUB_SHA:0:7}"
+          fi
+
+          END_TIME="${{ inputs.end_time }}"
+          END_TIME_FIELD=""
+          if [ -n "${END_TIME}" ]; then
+            END_TIME_FIELD="\"end_time\": \"${END_TIME}\","
+          fi
+
+          curl --fail --silent --show-error \
+            --request POST \
+            --url "${{ secrets.VALIANT_URL }}/api/v1/events" \
+            --header "Content-Type: application/json" \
+            --data @- <<EOF
+          {
+            "id":                "${GITHUB_RUN_ID}-${GITHUB_SHA}-${{ inputs.change_type }}",
+            "trigger_type":      "${{ inputs.trigger_type }}",
+            "execution_id":      "${GITHUB_RUN_ID}",
+            "change_type":       "${{ inputs.change_type }}",
+            "timestamp":         "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            ${END_TIME_FIELD}
+            "affected_services": ["${{ inputs.service_name }}"],
+            "summary":           "${SUMMARY}",
+            "metadata": {
+              "git_sha":       "${GITHUB_SHA}",
+              "image_tag":     "${IMAGE_TAG}",
+              "namespace":     "${{ inputs.namespace }}",
+              "branch":        "${GITHUB_REF_NAME}",
+              "author":        "${GITHUB_ACTOR}",
+              "build_url":     "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}",
+              "repository":    "${GITHUB_REPOSITORY}",
+              "run_number":    "${GITHUB_RUN_NUMBER}"
+            }
+          }
+          EOF

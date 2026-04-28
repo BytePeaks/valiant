@@ -1,0 +1,77 @@
+# Drop-in snippet: report a CI build success to Valiant as an intent event.
+#
+# Copy this file to .github/workflows/valiant-ci-notify.yml in your repository.
+# Required repository secrets:
+#   VALIANT_URL  - Base URL of your Valiant instance, e.g. https://valiant.internal
+#
+# This fires after your existing build/test jobs complete successfully and sends
+# a "build_success" intent event. Valiant uses the git_sha + image_tag to link
+# this event to the corresponding Kubernetes rollout.
+
+name: Notify Valiant – CI Build
+
+on:
+  push:
+    branches: [main, master]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ steps.meta.outputs.image_tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # ── Replace with your actual build steps ───────────────────────────────
+      - name: Build & test
+        run: |
+          echo "Running tests..."
+          # go test ./...  /  npm test  /  pytest  — whatever applies
+
+      - name: Build Docker image
+        id: meta
+        run: |
+          IMAGE_TAG="${{ github.sha }}"
+          echo "image_tag=${IMAGE_TAG}" >> "$GITHUB_OUTPUT"
+          # docker build -t myrepo/myimage:${IMAGE_TAG} .
+          # docker push myrepo/myimage:${IMAGE_TAG}
+      # ───────────────────────────────────────────────────────────────────────
+
+  notify-valiant:
+    needs: build-and-test
+    runs-on: ubuntu-latest
+    if: success()
+    steps:
+      - name: Send CI intent event to Valiant
+        env:
+          VALIANT_URL: ${{ secrets.VALIANT_URL }}
+        run: |
+          # Derive a short, human-readable service name from the repository name.
+          # Override SERVICE_NAME if your repo name differs from your k8s service name.
+          SERVICE_NAME="${GITHUB_REPOSITORY##*/}"
+          IMAGE_TAG="${{ needs.build-and-test.outputs.image_tag }}"
+
+          curl --fail --silent --show-error \
+            --request POST \
+            --url "${VALIANT_URL}/api/v1/events" \
+            --header "Content-Type: application/json" \
+            --data @- <<EOF
+          {
+            "id":                "${GITHUB_RUN_ID}-${GITHUB_SHA}",
+            "trigger_type":      "CI",
+            "execution_id":      "${GITHUB_RUN_ID}",
+            "change_type":       "build_success",
+            "timestamp":         "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "affected_services": ["${SERVICE_NAME}"],
+            "summary":           "CI build succeeded for ${SERVICE_NAME} at ${GITHUB_SHA:0:7}",
+            "metadata": {
+              "git_sha":     "${GITHUB_SHA}",
+              "image_tag":   "${IMAGE_TAG}",
+              "branch":      "${GITHUB_REF_NAME}",
+              "author":      "${GITHUB_ACTOR}",
+              "build_url":   "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}",
+              "repository":  "${GITHUB_REPOSITORY}",
+              "run_number":  "${GITHUB_RUN_NUMBER}"
+            }
+          }
+          EOF
