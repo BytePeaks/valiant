@@ -112,7 +112,7 @@ export default function TimelineEvent({ event }: TimelineEventProps) {
       {/* Event Header */}
       <div className="flex justify-between items-start">
         <div className="space-y-1">
-          <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest">
+          <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest flex-wrap">
             {event.linked_intent ? (
               <span className="flex items-center gap-1 px-2 py-0.5 bg-emerald-100 text-emerald-700 rounded-full">
                 <Link2 className="w-3 h-3" /> CORRELATED
@@ -130,6 +130,21 @@ export default function TimelineEvent({ event }: TimelineEventProps) {
             <span className="flex items-center gap-1 px-2 py-0.5 bg-gray-50 text-gray-700 rounded-full">
               {getSourceIcon()} {event.trigger_type || event.source}
             </span>
+            {event.analysis_status === 'pending' && (
+              <span className="flex items-center gap-1 px-2 py-0.5 bg-amber-50 text-amber-600 rounded-full border border-amber-100">
+                <Hourglass className="w-3 h-3" /> PENDING
+              </span>
+            )}
+            {event.analysis_status === 'ready' && (
+              <span className="flex items-center gap-1 px-2 py-0.5 bg-sky-50 text-sky-600 rounded-full border border-sky-100">
+                <Zap className="w-3 h-3" /> READY
+              </span>
+            )}
+            {event.analysis_status === 'completed' && (
+              <span className="flex items-center gap-1 px-2 py-0.5 bg-emerald-50 text-emerald-600 rounded-full border border-emerald-100">
+                <ShieldCheck className="w-3 h-3" /> ANALYZED
+              </span>
+            )}
           </div>
           <h3 className="text-xl font-bold text-gray-900 group-hover:text-blue-700 transition-colors">{event.summary}</h3>
           {event.blast_radius && <BlastRadiusDisplay blastRadius={event.blast_radius} />}
