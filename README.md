@@ -2,7 +2,8 @@
 
 **Change Impact Radar for Kubernetes**
 
-[![Status](https://img.shields.io/badge/status-active-brightgreen?style=flat)](https://github.com/BytePeaks/valiant)
+[![CI](https://github.com/BytePeaks/valiant/actions/workflows/ci.yml/badge.svg)](https://github.com/BytePeaks/valiant/actions/workflows/ci.yml)
+[![Release](https://github.com/BytePeaks/valiant/actions/workflows/release.yml/badge.svg)](https://github.com/BytePeaks/valiant/actions/workflows/release.yml)
 [![License](https://img.shields.io/github/license/BytePeaks/valiant?style=flat)](https://github.com/BytePeaks/valiant/blob/main/LICENSE)
 [![Go](https://img.shields.io/badge/go-%3E%3D1.25-blue?style=flat)](https://golang.org)
 [![Last Commit](https://img.shields.io/github/last-commit/BytePeaks/valiant?style=flat)](https://github.com/BytePeaks/valiant/commits)
@@ -45,7 +46,7 @@ Impact scores, metric shifts (baseline vs impact), confidence scoring, and orpha
 ![Custom Metrics](docs/images/service_analytics_custom_metrics.png)
 Define business-specific PromQL queries in `config.yaml` (e.g., orders/min, payment failures). Toggle visibility per service.
 
-### Deeplinking of intent
+### Deep Linking
 ![Deeplinking](docs/images/deeplinks.png)   
 Instantly navigate from a change event to its origin in external systems like `Git repositories`, `CI/CD pipelines` etc.
 > Configurable templates use event metadata to generate clickable links, providing immediate context and accelerating incident investigation.
@@ -69,9 +70,62 @@ Instantly navigate from a change event to its origin in external systems like `G
 
 ## Architecture
 
-[![Architecture Diagram](https://mermaid.ink/img/pako:eNptUttu00AQ_ZXVSkUg5WK3buz4ASmxHVQVoTQJVMKpqk08OCb2brS7hoQk34B4440XPqLfww_AJzC-NEkR87CanTnHM3uOt3QuIqAujSVbLcjEn3KCcXZGenMtpCLPSLDWIDlLyXijNGSqQrxVIMM_P779LLO7qnjtqPDX94ffD1_JdT5DFmhQpDe8qvveleeH3lXb88kwWUGacMDOYeQ7liaMa-IJCXhkK8GB63qgymfVjjXqvlqnahYxCML2QAqugUekSd7AWrc-qvbdEdEPwj6bL6v-K1Eshu_DaRJShq89gXoiTaFUIDymdR_5J0v7sMIC8HkC_27qM83ux8h87BTh98PnQ6F0LGF88_rFycyhFFlYHKAXkP9_mic4x2USwU98IM3my11fis-Y71CHqjMIyvooGE_Kl3osTZVLBqDn1WoNMpFJHCO_h_ZuVKJ2KNHjMPSy5N8yxKOLI5RB5BoxR0GOrlZQmC2EWD5F1JhDpUR6C8ZjCD4V9p4O7Vc7ozBkBCxq38pEww41e9IuNELETQ4SRd-VwtEG_sJJRF0tc2jQDGTGiivdFtQpRUkzmFIX04jJ5ZRO-R45K8bfC2TXNCnyeEHdDyxVeMtXEdPgJwztzA5VWdgtPZFzTd1zo_wGdbd0TV2rc9GyTLN72bEd2zS6VoNuqGsbLevCtmzbNE3H7Fj7Bv1SzjRajn1pFOGYjm0Z3fP9Xw1xIKo?type=png)](https://mermaid.live/edit#pako:eNptUttu00AQ_ZXVSkUg5WK3buz4ASmxHVQVoTQJVMKpqk08OCb2brS7hoQk34B4440XPqLfww_AJzC-NEkR87CanTnHM3uOt3QuIqAujSVbLcjEn3KCcXZGenMtpCLPSLDWIDlLyXijNGSqQrxVIMM_P779LLO7qnjtqPDX94ffD1_JdT5DFmhQpDe8qvveleeH3lXb88kwWUGacMDOYeQ7liaMa-IJCXhkK8GB63qgymfVjjXqvlqnahYxCML2QAqugUekSd7AWrc-qvbdEdEPwj6bL6v-K1Eshu_DaRJShq89gXoiTaFUIDymdR_5J0v7sMIC8HkC_27qM83ux8h87BTh98PnQ6F0LGF88_rFycyhFFlYHKAXkP9_mic4x2USwU98IM3my11fis-Y71CHqjMIyvooGE_Kl3osTZVLBqDn1WoNMpFJHCO_h_ZuVKJ2KNHjMPSy5N8yxKOLI5RB5BoxR0GOrlZQmC2EWD5F1JhDpUR6C8ZjCD4V9p4O7Vc7ozBkBCxq38pEww41e9IuNELETQ4SRd-VwtEG_sJJRF0tc2jQDGTGiivdFtQpRUkzmFIX04jJ5ZRO-R45K8bfC2TXNCnyeEHdDyxVeMtXEdPgJwztzA5VWdgtPZFzTd1zo_wGdbd0TV2rc9GyTLN72bEd2zS6VoNuqGsbLevCtmzbNE3H7Fj7Bv1SzjRajn1pFOGYjm0Z3fP9Xw1xIKo)
+```mermaid
+graph TD
+    %% Actors & External Systems
+    User[👤 User]
+    K8s[☸️ Kubernetes API]
+    CICD[CI/CD Pipeline]
+
+    %% Valiant Core Components
+    subgraph Valiant_System
+        FE[/Frontend - Next.js/]
+        BE[Backend - Go API & Correlator]
+        Collectors[Collectors]
+    end
+
+    %% Dependencies
+    subgraph Data_Stores
+        DB[(PostgreSQL)]
+        Prom[Prometheus]
+    end
+
+    %% Connections
+    User -->|Browser| FE
+    FE -->|REST API Calls: Fetch Data, Trigger Analysis| BE
+
+    K8s -->|Watches Rollouts| Collectors
+    CICD -->|Webhook| Collectors
+
+    Collectors -->|ChangeEvents| BE
+
+    BE -->|SQL Read/Write| DB
+    BE -->|PromQL Queries| Prom
+```
 
 Go backend + Next.js frontend + PostgreSQL + Prometheus (HTTP API). See [Architecture](docs/architecture.md) for details.
+
+---
+
+## Prerequisites
+
+**Local development** (Docker stack — quickest path):
+
+| Requirement | Notes |
+|:------------|:------|
+| Docker + Docker Compose v2+ | Runs backend, frontend, and PostgreSQL |
+| Prometheus v2+ (external) | Valiant queries your existing Prometheus — it is not bundled in the Docker stack |
+
+**Production — Kubernetes:**
+
+| Requirement | Notes |
+|:------------|:------|
+| Kubernetes 1.24+ | Valiant watches the K8s API for rollouts and config changes |
+| Prometheus v2+ | Read-only — Valiant queries the HTTP API, never writes to it |
+
+**Production — OpenShift / OKD:**
+
+Prometheus ships with OpenShift out of the box — no separate Prometheus install required.
 
 ---
 
@@ -146,10 +200,23 @@ See [Roadmap](docs/roadmap.md) for the full list.
 
 ## Contributing
 
-We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on development setup, code style, testing, and submitting pull requests.
+We welcome contributions! Quick local setup:
+
+```bash
+# Start dependencies
+docker-compose up -d db prometheus
+
+# Backend
+cd backend && go run cmd/valiant/main.go
+
+# Frontend (separate terminal)
+cd frontend && npm install && npm run dev
+```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for code style, testing requirements, and PR guidelines. Found a bug or have a feature request? [Open an issue](https://github.com/BytePeaks/valiant/issues).
 
 ---
 
 ## License
 
-[AGPL-3.0](LICENSE) - If you **modify** and deploy Valiant as a network service, you must make your source code available.
+[AGPL-3.0](LICENSE) — free to use and self-host. If you modify Valiant and deploy it as a network service, you must open-source your changes.

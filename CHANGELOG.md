@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Analysis status badges in event timeline** — PENDING, READY, and ANALYZED status indicators now appear as header badges on each event card in the main timeline, making analysis state scannable at a glance without expanding cards or visiting detail pages.
+- **Live image diffing on deployment events** — Deployment and StatefulSet rollout cards now display an `old → new` image tag diff inline, showing exactly what changed without needing to cross-reference CI events. The Kubernetes collector tracks the previous image tag per workload and stores it as `previous_image_tag` in event metadata; the frontend renders the diff in a compact monospace row on each affected card.
+
 ## [1.0.0-alpha] - 2026-02-12
 
 ### Added
