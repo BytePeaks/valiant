@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import Link from 'next/link';
 import {
   Bot, Box, Zap, ShieldCheck, ArrowRight, GitBranch, Tag, Clock,
   Link2, Loader2, Settings2, Activity, ExternalLink, Hourglass,
@@ -17,6 +18,8 @@ import BlastRadiusDisplay from './blast-radius';
 
 interface Props {
   event: ChangeEvent;
+  selectedMetrics?: Set<string>;
+  availableMetrics?: MetricInfo[];
 }
 
 function shortSha(sha: string): string {
@@ -52,7 +55,7 @@ function ImpactBadge({ level, score }: { level: string; score: number }) {
   );
 }
 
-export default function DeploymentStoryCard({ event }: Props) {
+export default function DeploymentStoryCard({ event, selectedMetrics: pageSelectedMetrics, availableMetrics: pageAvailableMetrics }: Props) {
   const intent = event.linked_intent!;
 
   const [analysis, setAnalysis] = useState<ImpactAnalysis | null>(null);
@@ -60,8 +63,8 @@ export default function DeploymentStoryCard({ event }: Props) {
   const [detailsExpanded, setDetailsExpanded] = useState(false);
   const [storyExpanded, setStoryExpanded] = useState(false);
   const [isMetricModalOpen, setIsMetricModalOpen] = useState(false);
-  const [availableMetrics, setAvailableMetrics] = useState<MetricInfo[]>([]);
-  const [selectedMetrics, setSelectedMetrics] = useState<Set<string>>(new Set(CORE_METRICS));
+  const [availableMetrics, setAvailableMetrics] = useState<MetricInfo[]>(pageAvailableMetrics ?? []);
+  const [selectedMetrics, setSelectedMetrics] = useState<Set<string>>(pageSelectedMetrics ?? new Set(CORE_METRICS));
   const [selectedService, setSelectedService] = useState<string | null>(
     event.affected_services[0] ?? null
   );
@@ -82,7 +85,15 @@ export default function DeploymentStoryCard({ event }: Props) {
     null;
 
   useEffect(() => {
-    if (!selectedService) return;
+    if (pageSelectedMetrics) setSelectedMetrics(pageSelectedMetrics);
+  }, [pageSelectedMetrics]);
+
+  useEffect(() => {
+    if (pageAvailableMetrics) setAvailableMetrics(pageAvailableMetrics);
+  }, [pageAvailableMetrics]);
+
+  useEffect(() => {
+    if (!selectedService || pageSelectedMetrics) return;
     Promise.all([fetchAvailableMetrics(), fetchServicePreferences(selectedService)]).then(
       ([available, prefs]) => {
         setAvailableMetrics(available);
@@ -244,10 +255,10 @@ export default function DeploymentStoryCard({ event }: Props) {
             </p>
             <div className="mt-auto flex flex-wrap gap-1">
               {event.affected_services.slice(0, 2).map(s => (
-                <span key={s} className="flex items-center gap-0.5 px-1.5 py-0.5 bg-white text-emerald-700 text-[10px] font-bold rounded border border-emerald-100">
+                <Link key={s} href={`/services/${encodeURIComponent(s)}`} className="flex items-center gap-0.5 px-1.5 py-0.5 bg-white text-emerald-700 text-[10px] font-bold rounded border border-emerald-100 hover:bg-emerald-50 transition-colors">
                   <Tag className="w-2.5 h-2.5" />
                   {s}
-                </span>
+                </Link>
               ))}
               <span className="flex items-center gap-0.5 px-1.5 py-0.5 bg-white text-gray-400 text-[10px] rounded border border-emerald-100">
                 <Clock className="w-2.5 h-2.5" />
@@ -316,9 +327,9 @@ export default function DeploymentStoryCard({ event }: Props) {
             <Clock className="w-3 h-3" />
             {new Date(event.timestamp).toLocaleString()}
             {event.affected_services.map(s => (
-              <span key={s} className="flex items-center gap-1 px-2 py-0.5 bg-emerald-50 text-emerald-600 text-[10px] font-bold rounded-full border border-emerald-100">
+              <Link key={s} href={`/services/${encodeURIComponent(s)}`} className="flex items-center gap-1 px-2 py-0.5 bg-emerald-50 text-emerald-600 text-[10px] font-bold rounded-full border border-emerald-100 hover:bg-emerald-100 transition-colors">
                 <Tag className="w-2 h-2" /> {s}
-              </span>
+              </Link>
             ))}
             {intentSha && (
               <span className="flex items-center gap-1 px-2 py-0.5 bg-gray-50 text-gray-600 text-[10px] font-bold rounded-full border border-gray-100"
@@ -396,10 +407,12 @@ export default function DeploymentStoryCard({ event }: Props) {
                 <h4 className="text-xs font-bold text-gray-400 uppercase tracking-widest flex items-center gap-2">
                   <Activity className="w-3 h-3" /> Metric Shifts (vs Baseline)
                 </h4>
-                <button onClick={() => setIsMetricModalOpen(true)}
-                  className="flex items-center gap-2 px-3 py-1 bg-gray-100 text-gray-600 text-xs font-bold rounded-lg hover:bg-gray-200 transition-all border border-gray-200">
-                  <Settings2 className="w-3 h-3" /> Customize
-                </button>
+                {!pageSelectedMetrics && (
+                  <button onClick={() => setIsMetricModalOpen(true)}
+                    className="flex items-center gap-2 px-3 py-1 bg-gray-100 text-gray-600 text-xs font-bold rounded-lg hover:bg-gray-200 transition-all border border-gray-200">
+                    <Settings2 className="w-3 h-3" /> Customize
+                  </button>
+                )}
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 mb-4">
                 {metricsToRender.map(metricName => {

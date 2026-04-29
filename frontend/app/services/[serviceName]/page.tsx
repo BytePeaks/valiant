@@ -2,9 +2,15 @@
 
 import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { ChangeEvent, EventsResponse, fetchChangeEvents } from '@/lib/api';
+import {
+  ChangeEvent, EventsResponse, fetchChangeEvents,
+  fetchAvailableMetrics, fetchServicePreferences, saveServicePreferences,
+} from '@/lib/api';
+import type { MetricInfo } from '@/components/promql-modal';
 import Timeline from '@/components/timeline/timeline';
-import { ChevronLeft, Activity, Filter, RefreshCcw } from 'lucide-react';
+import { getIcon } from '@/components/icons';
+import { METRIC_CONFIG, CORE_METRICS } from '@/components/timeline/constants';
+import { ChevronLeft, Activity, Filter, RefreshCcw, BarChart2, Check } from 'lucide-react';
 import Link from 'next/link';
 
 export default function ServicePage() {
@@ -13,6 +19,10 @@ export default function ServicePage() {
   const [events, setEvents] = useState<ChangeEvent[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [availableMetrics, setAvailableMetrics] = useState<MetricInfo[]>([]);
+  const [selectedMetrics, setSelectedMetrics] = useState<Set<string>>(new Set(CORE_METRICS));
+  const [savingPrefs, setSavingPrefs] = useState(false);
+  const [prefsSaved, setPrefsSaved] = useState(false);
 
   const fetchServiceEvents = () => {
     setLoading(true);
@@ -28,6 +38,38 @@ export default function ServicePage() {
   useEffect(() => {
     fetchServiceEvents();
   }, [serviceName]);
+
+  useEffect(() => {
+    const decodedName = decodeURIComponent(serviceName as string);
+    Promise.all([fetchAvailableMetrics(), fetchServicePreferences(decodedName)]).then(
+      ([available, prefs]) => {
+        setAvailableMetrics(available);
+        if (prefs.length > 0) {
+          setSelectedMetrics(new Set(prefs));
+        } else {
+          setSelectedMetrics(new Set(available.filter(m => CORE_METRICS.includes(m.name)).map(m => m.name)));
+        }
+      }
+    );
+  }, [serviceName]);
+
+  const handleToggleMetric = (name: string) => {
+    setSelectedMetrics(prev => {
+      const next = new Set(prev);
+      next.has(name) ? next.delete(name) : next.add(name);
+      return next;
+    });
+    setPrefsSaved(false);
+  };
+
+  const handleSavePreferences = async () => {
+    setSavingPrefs(true);
+    const decodedName = decodeURIComponent(serviceName as string);
+    await saveServicePreferences(decodedName, Array.from(selectedMetrics));
+    setSavingPrefs(false);
+    setPrefsSaved(true);
+    setTimeout(() => setPrefsSaved(false), 2000);
+  };
 
   return (
     <main className="min-h-screen bg-gray-50 p-8 md:p-24">
@@ -69,6 +111,52 @@ export default function ServicePage() {
           </div>
         </header>
 
+        {availableMetrics.length > 0 && (
+          <section className="mb-8 bg-white p-5 rounded-2xl border border-gray-100 shadow-sm">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2 text-xs font-bold text-gray-400 uppercase tracking-widest">
+                <BarChart2 className="w-3 h-3" />
+                Metric Filters
+              </div>
+              <button
+                onClick={handleSavePreferences}
+                disabled={savingPrefs}
+                className={`flex items-center gap-1.5 px-3 py-1 text-xs font-bold rounded-lg transition-all border ${
+                  prefsSaved
+                    ? 'bg-emerald-50 text-emerald-600 border-emerald-200'
+                    : 'bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100'
+                }`}
+              >
+                <Check className="w-3 h-3" />
+                {prefsSaved ? 'Saved!' : 'Save Preferences'}
+              </button>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {availableMetrics.map(metric => {
+                const isSelected = selectedMetrics.has(metric.name);
+                const config = METRIC_CONFIG[metric.name];
+                return (
+                  <button
+                    key={metric.name}
+                    onClick={() => handleToggleMetric(metric.name)}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold border transition-all ${
+                      isSelected
+                        ? 'bg-blue-600 text-white border-blue-600 shadow-sm shadow-blue-200'
+                        : 'bg-gray-50 text-gray-500 border-gray-200 hover:bg-gray-100'
+                    }`}
+                  >
+                    {getIcon(metric.icon)}
+                    {config?.label || metric.name}
+                  </button>
+                );
+              })}
+            </div>
+            <p className="text-[10px] text-gray-400 mt-2">
+              {selectedMetrics.size} of {availableMetrics.length} metrics shown in analysis cards below
+            </p>
+          </section>
+        )}
+
         <section>
           <div className="flex items-center gap-2 mb-6 text-sm font-bold text-gray-400 uppercase tracking-widest">
             <Filter className="w-3 h-3" />
@@ -82,7 +170,7 @@ export default function ServicePage() {
               ))}
             </div>
           ) : events.length > 0 ? (
-            <Timeline events={events} />
+            <Timeline events={events} selectedMetrics={selectedMetrics} availableMetrics={availableMetrics} />
           ) : (
             <div className="text-center py-20 bg-white rounded-3xl border-2 border-dashed border-gray-200 text-gray-400 font-medium">
               No change events found for this service.

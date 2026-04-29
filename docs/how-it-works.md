@@ -305,3 +305,29 @@ See [Configuration](configuration.md) for the full reference.
 A background worker runs every 5 minutes and automatically triggers analysis for events whose impact window has closed but haven't been analyzed yet. This means you don't have to manually trigger analysis for every event - the worker handles it.
 
 Manual analysis via the UI or API is still available for on-demand investigation.
+
+---
+
+## UI Navigation
+
+### Dashboard → Service Analytics
+
+Every event card on the main dashboard timeline displays the affected service names as **green clickable chips** (e.g., `payment-service`). Clicking a chip navigates directly to the **Service Analytics page** for that service (`/services/<name>`).
+
+The same chips appear in two places on each card:
+
+| Location | Card type |
+|---|---|
+| Inline timestamp row (below the event summary) | Standard `TimelineEvent` card |
+| K8s Rollout stage footer + expanded detail row | `DeploymentStoryCard` (correlated story) |
+
+### Service Analytics Page
+
+The service analytics page (`/services/<name>`) shows a filtered change timeline scoped to that service. At the top of the page, a **Metric Filters panel** lets you control which metrics are displayed across all analysis cards:
+
+- Each available metric (core and custom) is rendered as a toggle chip — **blue = active**, **gray = inactive**.
+- Clicking a chip toggles that metric on or off immediately for all event cards below.
+- **Save Preferences** persists the selection via the API so the same view is restored on the next visit.
+- When metric preferences are set at the page level, the per-card "Customize" button is hidden — the panel is the single control point for that service.
+
+To return to the full dashboard, use the **← Back to all services** link in the page header.

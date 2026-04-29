@@ -1,8 +1,9 @@
 
 import { useState, useEffect } from 'react';
+import Link from 'next/link';
 import { Clock, Zap, GitBranch, Box, Bot, Info, Hourglass, Loader2, Tag, ShieldCheck, Settings2, Activity, ExternalLink, Link2, Rocket, Webhook, Hand, ArrowRight } from 'lucide-react';
 import { timeAgo, getImpactColor } from '../../lib/utils';
-import type { ChangeEvent, ImpactAnalysis, TimelineEventProps } from '../../lib/api';
+import type { ChangeEvent, ImpactAnalysis } from '../../lib/api';
 import type { MetricInfo } from '../promql-modal';
 import { fetchAvailableMetrics, analyzeImpact, fetchServicePreferences, saveServicePreferences } from '../../lib/api';
 import { MetricDelta } from './metric-delta';
@@ -10,13 +11,19 @@ import { METRIC_CONFIG, CORE_METRICS } from './constants';
 import { getIcon } from '../icons';
 import BlastRadiusDisplay from './blast-radius';
 
-export default function TimelineEvent({ event }: TimelineEventProps) {
+interface TimelineEventProps {
+  event: ChangeEvent;
+  selectedMetrics?: Set<string>;
+  availableMetrics?: MetricInfo[];
+}
+
+export default function TimelineEvent({ event, selectedMetrics: pageSelectedMetrics, availableMetrics: pageAvailableMetrics }: TimelineEventProps) {
   const [analysis, setAnalysis] = useState<ImpactAnalysis | null>(null);
   const [loading, setLoading] = useState(event.analysis_status === 'completed');
   const [detailsExpanded, setDetailsExpanded] = useState(false);
   const [isMetricSelectionModalOpen, setIsMetricSelectionModalOpen] = useState(false);
-  const [availableMetrics, setAvailableMetrics] = useState<MetricInfo[]>([]);
-  const [selectedMetrics, setSelectedMetrics] = useState<Set<string>>(new Set(CORE_METRICS));
+  const [availableMetrics, setAvailableMetrics] = useState<MetricInfo[]>(pageAvailableMetrics ?? []);
+  const [selectedMetrics, setSelectedMetrics] = useState<Set<string>>(pageSelectedMetrics ?? new Set(CORE_METRICS));
   const [selectedService, setSelectedService] = useState<string | null>(null);
 
   const isPending = event.analysis_status === 'pending';
@@ -29,7 +36,15 @@ export default function TimelineEvent({ event }: TimelineEventProps) {
   }, [event.affected_services]);
 
   useEffect(() => {
-    if (!selectedService) return;
+    if (pageSelectedMetrics) setSelectedMetrics(pageSelectedMetrics);
+  }, [pageSelectedMetrics]);
+
+  useEffect(() => {
+    if (pageAvailableMetrics) setAvailableMetrics(pageAvailableMetrics);
+  }, [pageAvailableMetrics]);
+
+  useEffect(() => {
+    if (!selectedService || pageSelectedMetrics) return;
 
     Promise.all([fetchAvailableMetrics(), fetchServicePreferences(selectedService)]).then(
       ([available, preferences]) => {
@@ -37,7 +52,6 @@ export default function TimelineEvent({ event }: TimelineEventProps) {
         if (preferences.length > 0) {
           setSelectedMetrics(new Set(preferences));
         } else {
-          // Default to core metrics if no preferences are saved
           const coreMetrics = available.filter(m => CORE_METRICS.includes(m.name)).map(m => m.name);
           setSelectedMetrics(new Set(coreMetrics));
         }
@@ -168,10 +182,10 @@ export default function TimelineEvent({ event }: TimelineEventProps) {
               {timeAgo(new Date(event.timestamp))}
             </span>
             {event.affected_services?.map(service => (
-              <span key={service} className="flex items-center gap-1 px-2 py-0.5 bg-emerald-50 text-emerald-600 text-[10px] font-bold rounded-full border border-emerald-100">
+              <Link key={service} href={`/services/${encodeURIComponent(service)}`} className="flex items-center gap-1 px-2 py-0.5 bg-emerald-50 text-emerald-600 text-[10px] font-bold rounded-full border border-emerald-100 hover:bg-emerald-100 transition-colors">
                 <Tag className="w-2 h-2" />
                 {service}
-              </span>
+              </Link>
             ))}
             {(event.metadata?.git_commit_sha || event.metadata?.git_sha) && (
               <span
@@ -314,19 +328,21 @@ export default function TimelineEvent({ event }: TimelineEventProps) {
                   <Activity className="w-3 h-3" />
                   Metric Shifts (vs Baseline)
                 </h4>
-                <div className="relative group/button">
-                  <button
-                    onClick={handleCustomizeClick}
-                    className="flex items-center gap-2 px-3 py-1 bg-gray-100 text-gray-600 text-xs font-bold rounded-lg hover:bg-gray-200 transition-all border border-gray-200"
-                  >
-                    <Settings2 className="w-3 h-3" />
-                    Customize
-                  </button>
-                  <div className="absolute bottom-full mb-2 hidden group-hover/button:block w-48 p-2 bg-gray-900 text-white text-[10px] rounded shadow-lg z-10 text-center pointer-events-none">
-                    Choose which metrics are displayed. These preferences are saved for this service.
-                    <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-gray-900"></div>
+                {!pageSelectedMetrics && (
+                  <div className="relative group/button">
+                    <button
+                      onClick={handleCustomizeClick}
+                      className="flex items-center gap-2 px-3 py-1 bg-gray-100 text-gray-600 text-xs font-bold rounded-lg hover:bg-gray-200 transition-all border border-gray-200"
+                    >
+                      <Settings2 className="w-3 h-3" />
+                      Customize
+                    </button>
+                    <div className="absolute bottom-full mb-2 hidden group-hover/button:block w-48 p-2 bg-gray-900 text-white text-[10px] rounded shadow-lg z-10 text-center pointer-events-none">
+                      Choose which metrics are displayed. These preferences are saved for this service.
+                      <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-gray-900"></div>
+                    </div>
                   </div>
-                </div>
+                )}
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 mb-6">
                 {metricsToRender.map(metricName => {
