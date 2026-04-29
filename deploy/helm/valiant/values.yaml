@@ -1,0 +1,106 @@
+nameOverride: ""
+fullnameOverride: ""
+
+# -- Backend container settings
+backend:
+  image:
+    repository: ghcr.io/bytepeaks/valiant-backend
+    tag: latest
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+# -- Frontend container settings
+frontend:
+  image:
+    repository: ghcr.io/bytepeaks/valiant-frontend
+    tag: latest
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 300m
+      memory: 256Mi
+  # apiUrl defaults to http://<release>-backend.<namespace>.svc.cluster.local:8080/api/v1
+  # Set explicitly to override (e.g. when backend is exposed via Ingress).
+  apiUrl: ""
+
+# -- Optional Ingress for the frontend
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  host: ""
+  tls: []
+
+# -- RBAC binding scope
+# clusterScoped: true  -> ClusterRoleBinding (backend watches all namespaces)
+# clusterScoped: false -> per-namespace RoleBindings (requires config.kubernetes.namespaces non-empty)
+rbac:
+  clusterScoped: true
+
+# -- Bundled PostgreSQL (set enabled: false to use an external database)
+postgresql:
+  enabled: true
+  password: "changeme"
+  storage: 10Gi
+
+# -- External database override
+# When postgresql.enabled: false this field is required.
+# When postgresql.enabled: true, leave empty to auto-construct from postgresql.password.
+database:
+  url: ""
+
+# -- Valiant backend config.yaml — every field maps 1:1 to config.yaml
+config:
+  port: "8080"
+
+  prometheus:
+    url: "http://prometheus:9090"
+    # Override built-in PromQL templates. Keys: error_rate, latency_p95, rps, cpu, memory.
+    # Values are PromQL strings. Use {{ .Services }} and {{ .Duration }} as template variables.
+    queries: {}
+    # List of additional metrics shown in the UI.
+    # Each entry: { name: string, query: string (PromQL), icon: string (Lucide icon name) }
+    additionalMetrics: []
+
+  kubernetes:
+    enabled: true
+    namespaces: []
+    requireAnnotation: false
+    allowedSources:
+      - argocd
+      - helm
+      - cicd
+    watchConfigmaps: true
+    watchSecrets: true
+
+  retention:
+    eventTtl: "90d"
+    cleanupInterval: "1h"
+
+  analysis:
+    baselineWindow: "30m"
+    postExecutionImpactWindow: "30m"
+    intentExecutionCorrelationWindow: "1h"
+    configTriggerWindow: "15m"
+    # Override built-in metric weights. Empty = use built-in defaults.
+    # Keys: error_rate, latency_p95_ms, cpu, memory, rps
+    weightsBuiltIn: {}
+    # Weights for metrics defined in prometheus.additionalMetrics.
+    # Key must match the metric name exactly.
+    weightsCustom: {}
+
+  # Deep-link templates rendered from event metadata.
+  # Each entry: { name: string, metadataHas: [string], urlTemplate: string }
+  linking: []
+
+  worker:
+    pollingInterval: "5m"

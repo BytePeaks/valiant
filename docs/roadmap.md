@@ -37,7 +37,7 @@ All features available in the current release.
 | 2 | Live image diffing on deployment events | ✅ Done |
 | 3 | Deployment Story timeline - intent + execution as a single unified card (`CI Build → Image Push → K8s Rollout → Impact Score`) | ✅ Done |
 | 4 | Multi-metric UI toggle in service analytics | ✅ Done |
-| 5 | **Helm chart** - `helm install valiant valiant/valiant`, listed on Artifact Hub on release | 🔲 |
+| 5 | **Helm chart** - `helm install valiant valiant/valiant`, listed on Artifact Hub on release | ✅ Done |
 | 6 | GitHub Actions example configs - drop-in workflow snippets for CI/CD event injection | ✅ Done |
 
 ---

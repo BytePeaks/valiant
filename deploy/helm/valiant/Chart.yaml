@@ -1,0 +1,16 @@
+apiVersion: v2
+name: valiant
+description: Change Impact Radar for Kubernetes - correlates deployment events with Prometheus metric shifts.
+type: application
+version: 0.1.0
+appVersion: "1.0.0-beta"
+keywords:
+  - kubernetes
+  - observability
+  - deployment
+  - prometheus
+home: https://github.com/bytepeaks/valiant
+sources:
+  - https://github.com/bytepeaks/valiant
+maintainers:
+  - name: Valiant Maintainers

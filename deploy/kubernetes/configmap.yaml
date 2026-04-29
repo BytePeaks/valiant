@@ -8,107 +8,36 @@ metadata:
     app.kubernetes.io/part-of: valiant
 data:
   config.yaml: |
-    # Valiant Backend Configuration
-    # -----------------------------
-
-    # Database Connection (Can be overridden by DATABASE_URL env var)
-    # Ensure the database exists and the schema migrations are applied.
-    database_url: "postgres://valiant:valiant_password@postgres:5432/valiant?sslmode=disable"
-
-    # Backend Server Port
+    database_url: "postgres://valiant:changeme@postgres.valiant.svc.cluster.local:5432/valiant?sslmode=disable"
     port: "8080"
-
-    # Prometheus Configuration
-    # ------------------------
     prometheus:
-      # The URL where Prometheus can be reached.
-      # Adjusted for Kubernetes service discovery.
       url: "http://prometheus.monitoring.svc.cluster.local:9090"
-
-      # Custom PromQL Query Templates
-      # You can extend the default queries here to match your specific exporters or labels.
-      # Available variables:
-      #   {{ .Services }} - Regex-friendly list of services (e.g., "svc-a|svc-b")
-      #   {{ .Duration }} - The analysis window duration (e.g., "30m")
-      queries:
-        error_rate: `avg_over_time(sum(rate(http_requests_total{service=~"{{ .Services }}",status=~"5.."}[1m]))[{{ .Duration }}])`
-        latency_p95: `avg_over_time(histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{service=~"{{ .Services }}"}[1m])))[{{ .Duration }}])`
-        rps: `avg_over_time(sum(rate(http_requests_total{service=~"{{ .Services }}"}[1m]))[{{ .Duration }}])`
-        cpu: `avg_over_time(sum(rate(container_cpu_usage_seconds_total{container=~"{{ .Services }}"}[1m]))[{{ .Duration }}])`
-        memory: `avg_over_time(sum(container_memory_usage_bytes{container=~"{{ .Services }}"})[{{ .Duration }}])`
-
-
-      # Additional Metrics
-      # ------------------
-      # Define a list of custom PromQL queries. These will be collected for every analysis.
-      # Users can then choose which metrics (core and additional) to view in the UI.
-      additional_metrics:
-        - name: "orders_per_minute"
-          query: |
-            sum(rate(app_orders_total{service=~"{{ .Services }}"}[1m])) * 60
-          icon: "ShoppingCart"
-        - name: "payment_failure_rate"
-          query: |
-            sum(rate(app_payment_failures_total{service=~"{{ .Services }}"}[1m])) / sum(rate(app_payments_total{service=~"{{ .Services }}"}[1m]))
-          icon: "CreditCard"
-
-    # Kubernetes Collector Configuration
-    # ----------------------------------
+      # queries:
+      #   error_rate: `avg_over_time(...)`
+      additional_metrics: []
     kubernetes:
       enabled: true
       kube_config_path: ""
-      namespaces: [] # Empty to watch ALL namespaces, or specify for specific namespaces
-      require_annotation: false # Set to true to enforce valiant.io/source annotation
+      namespaces: []
+      require_annotation: false
       allowed_sources: ["argocd", "helm", "cicd"]
       watch_configmaps: true
       watch_secrets: true
-
-    # Event Retention Configuration
-    # -----------------------------
     retention:
       event_ttl: "90d"
       cleanup_interval: "1h"
-
-    # Analysis Window Configuration
-    # -----------------------------
     analysis:
       baseline_window: "30m"
       post_execution_impact_window: "30m"
       intent_execution_correlation_window: "1h"
-
-      # Metric Weights
-      # ---------------
-      # Uncomment and adjust if you need to override default built-in metric weights.
+      config_trigger_window: "15m"
       # weights_built_in:
       #   error_rate: 0.4
       #   latency_p95_ms: 0.3
       #   cpu: 0.1
       #   memory: 0.1
       #   rps: 0.1
-
-      # Define weights for any custom metrics you have configured.
-      weights_custom:
-        orders_per_minute: 0.1
-        payment_failure_rate: 0.2
-
-    # Linking Configuration
-    # ---------------------
-    # Define templates to generate clickable deep links from event metadata.
-    # These links will appear in the UI for relevant ChangeEvents.
-    linking:
-      - name: "View Commit on GitHub"
-        metadata_has: ["repository_url", "git_commit_sha"]
-        url_template: "{{ .repository_url }}/commit/{{ .git_commit_sha }}"
-
-      - name: "View Build on Jenkins"
-        metadata_has: ["jenkins_url", "jenkins_job_name", "jenkins_build_id"]
-        url_template: "{{ .jenkins_url }}/job/{{ .jenkins_job_name }}/{{ .jenkins_build_id }}"
-
-      - name: "Open ArgoCD Application"
-        metadata_has: ["argocd_url", "argocd_app_name"]
-        url_template: "{{ .argocd_url }}/applications/{{ .argocd_app_name }}"
-
-    # Worker Configuration
-    # --------------------
+      weights_custom: {}
+    linking: []
     worker:
       polling_interval: "5m"

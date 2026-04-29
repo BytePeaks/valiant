@@ -1,0 +1,66 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "valiant.fullname" . }}-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "valiant.labels" . | nindent 4 }}
+data:
+  config.yaml: |
+    database_url: {{ include "valiant.databaseUrl" . | quote }}
+    port: {{ .Values.config.port | quote }}
+    prometheus:
+      url: {{ .Values.config.prometheus.url | quote }}
+      {{- if .Values.config.prometheus.queries }}
+      queries:
+        {{- range $key, $val := .Values.config.prometheus.queries }}
+        {{ $key }}: {{ $val | quote }}
+        {{- end }}
+      {{- end }}
+      {{- if .Values.config.prometheus.additionalMetrics }}
+      additional_metrics:
+        {{- range .Values.config.prometheus.additionalMetrics }}
+        - name: {{ .name | quote }}
+          query: |
+{{ .query | trim | indent 12 }}
+          icon: {{ .icon | quote }}
+        {{- end }}
+      {{- end }}
+    kubernetes:
+      enabled: {{ .Values.config.kubernetes.enabled }}
+      kube_config_path: ""
+      namespaces: {{ toJson .Values.config.kubernetes.namespaces }}
+      require_annotation: {{ .Values.config.kubernetes.requireAnnotation }}
+      allowed_sources: {{ toJson .Values.config.kubernetes.allowedSources }}
+      watch_configmaps: {{ .Values.config.kubernetes.watchConfigmaps }}
+      watch_secrets: {{ .Values.config.kubernetes.watchSecrets }}
+    retention:
+      event_ttl: {{ .Values.config.retention.eventTtl | quote }}
+      cleanup_interval: {{ .Values.config.retention.cleanupInterval | quote }}
+    analysis:
+      baseline_window: {{ .Values.config.analysis.baselineWindow | quote }}
+      post_execution_impact_window: {{ .Values.config.analysis.postExecutionImpactWindow | quote }}
+      intent_execution_correlation_window: {{ .Values.config.analysis.intentExecutionCorrelationWindow | quote }}
+      config_trigger_window: {{ .Values.config.analysis.configTriggerWindow | quote }}
+      {{- if .Values.config.analysis.weightsBuiltIn }}
+      weights_built_in:
+        {{- range $key, $val := .Values.config.analysis.weightsBuiltIn }}
+        {{ $key }}: {{ $val }}
+        {{- end }}
+      {{- end }}
+      {{- if .Values.config.analysis.weightsCustom }}
+      weights_custom:
+        {{- range $key, $val := .Values.config.analysis.weightsCustom }}
+        {{ $key }}: {{ $val }}
+        {{- end }}
+      {{- end }}
+    {{- if .Values.config.linking }}
+    linking:
+      {{- range .Values.config.linking }}
+      - name: {{ .name | quote }}
+        metadata_has: {{ toJson .metadataHas }}
+        url_template: {{ .urlTemplate | quote }}
+      {{- end }}
+    {{- end }}
+    worker:
+      polling_interval: {{ .Values.config.worker.pollingInterval | quote }}

@@ -1,0 +1,53 @@
+{{- if and (not .Values.rbac.clusterScoped) (empty .Values.config.kubernetes.namespaces) }}
+{{- fail "rbac.clusterScoped: false requires at least one entry in config.kubernetes.namespaces" }}
+{{- end }}
+
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "valiant.fullname" . }}-watcher
+  labels:
+    {{- include "valiant.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments", "replicasets"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["configmaps", "secrets"]
+    verbs: ["get", "list", "watch"]
+---
+{{- if .Values.rbac.clusterScoped }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "valiant.fullname" . }}-watcher-binding
+  labels:
+    {{- include "valiant.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "valiant.fullname" . }}-watcher
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "valiant.fullname" . }}-backend
+    namespace: {{ .Release.Namespace }}
+{{- else }}
+{{- range .Values.config.kubernetes.namespaces }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "valiant.fullname" $ }}-watcher-binding
+  namespace: {{ . }}
+  labels:
+    {{- include "valiant.labels" $ | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "valiant.fullname" $ }}-watcher
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "valiant.fullname" $ }}-backend
+    namespace: {{ $.Release.Namespace }}
+---
+{{- end }}
+{{- end }}

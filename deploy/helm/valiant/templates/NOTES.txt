@@ -1,0 +1,28 @@
+Valiant has been deployed!
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ Accessing the UI
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+{{- if .Values.ingress.enabled }}
+  Frontend URL: http{{ if .Values.ingress.tls }}s{{ end }}://{{ .Values.ingress.host }}
+{{- else }}
+  Run the following to open the dashboard locally:
+
+    kubectl port-forward -n {{ .Release.Namespace }} svc/{{ include "valiant.fullname" . }}-frontend 3000:3000
+
+  Then open: http://localhost:3000
+{{- end }}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ Warnings
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+{{- if and .Values.postgresql.enabled (eq .Values.postgresql.password "changeme") }}
+⚠  postgresql.password is set to the default "changeme".
+   Set a strong password:  --set postgresql.password=<strong-password>
+{{- end }}
+{{- if not .Values.postgresql.enabled }}
+ℹ  postgresql.enabled is false — ensure database.url points to your external PostgreSQL instance.
+{{- end }}
+{{- if not .Values.rbac.clusterScoped }}
+ℹ  rbac.clusterScoped is false — Valiant will only watch namespaces listed in config.kubernetes.namespaces.
+{{- end }}
