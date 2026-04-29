@@ -170,8 +170,8 @@ func TestScoreCandidate(t *testing.T) {
 			wantScore: 6, // web+2, monitoring+2, thanos+1, selector+1
 		},
 		{
-			name: "prometheus name with fallback port",
-			c:    candidate{namespace: "default", name: "prometheus", port: 8888, isFallback: true},
+			name:      "prometheus name with fallback port",
+			c:         candidate{namespace: "default", name: "prometheus", port: 8888, isFallback: true},
 			wantScore: 1, // name+2, fallback-1
 		},
 	}
