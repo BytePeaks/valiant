@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.0.0-beta] - 2026-04-29
 
 ### Added
 - **Prometheus auto-discovery** — Valiant now automatically locates a Prometheus endpoint when running in Kubernetes, so `prometheus.url` no longer needs to be set manually in-cluster. On startup the backend queries the Kubernetes Services API (both `app.kubernetes.io/name=prometheus` and `app=prometheus` label selectors across all reachable namespaces), scores each candidate by port number, port name, service name, namespace, and component labels, validates the top candidates against `/api/v1/status/buildinfo`, and promotes the highest-ranked responding endpoint. Explicit `prometheus.url` config (or `PROMETHEUS_URL` env var) still takes priority and bypasses discovery entirely. If no endpoint is found, the backend starts normally with metrics disabled (HTTP 503 on metric endpoints) rather than refusing to start. Scheme fallback (http↔https) is tried automatically on redirect or TLS responses. RBAC: the ClusterRole now includes `get`/`list` on `services` and `namespaces`.
