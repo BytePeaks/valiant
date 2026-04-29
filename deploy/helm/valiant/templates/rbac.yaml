@@ -15,6 +15,9 @@ rules:
   - apiGroups: [""]
     resources: ["configmaps", "secrets"]
     verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["services", "namespaces"]
+    verbs: ["get", "list"]
 ---
 {{- if .Values.rbac.clusterScoped }}
 apiVersion: rbac.authorization.k8s.io/v1

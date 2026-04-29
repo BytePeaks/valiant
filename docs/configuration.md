@@ -36,7 +36,11 @@ port: "8080"
 
 ```yaml
 prometheus:
-  # Prometheus server URL (can be overridden by PROMETHEUS_URL env var)
+  # Prometheus server URL (can be overridden by PROMETHEUS_URL env var).
+  # Optional when running in Kubernetes — if omitted, Valiant auto-discovers
+  # a Prometheus-compatible endpoint by querying the cluster's Services API
+  # (labels: app.kubernetes.io/name=prometheus or app=prometheus).
+  # Set this explicitly to skip discovery and silence the multi-candidate warning.
   url: "http://prometheus:9090"
 
   # Override default PromQL queries for core metrics.

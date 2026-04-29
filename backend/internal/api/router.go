@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"sort"
@@ -90,8 +91,11 @@ func (router *Router) handleMetrics(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-
 	metricInfo := router.metrics.GetAvailableMetrics()
+	if metricInfo == nil {
+		http.Error(w, `{"error":"Prometheus not configured"}`, http.StatusServiceUnavailable)
+		return
+	}
 	json.NewEncoder(w).Encode(metricInfo)
 }
 
@@ -403,6 +407,10 @@ func (router *Router) handleAnalysis(w http.ResponseWriter, r *http.Request) {
 	if err == correlator.ErrImpactWindowNotClosed {
 		w.WriteHeader(http.StatusUnprocessableEntity) // 422 indicates semantic issue (too early)
 		json.NewEncoder(w).Encode(analysis)
+		return
+	}
+	if errors.Is(err, metrics.ErrPrometheusUnavailable) {
+		http.Error(w, `{"error":"Prometheus not configured. Set prometheus.url in config or ensure Prometheus is discoverable in-cluster."}`, http.StatusServiceUnavailable)
 		return
 	}
 	if err != nil {

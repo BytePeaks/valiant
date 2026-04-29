@@ -68,6 +68,8 @@ Stores:
 
 An external Prometheus instance that Valiant queries via the HTTP API (`/api/v1/query_range`). Valiant never writes to Prometheus - it only reads metric data during analysis.
 
+When running in Kubernetes without an explicit `prometheus.url`, the backend runs a one-shot auto-discovery at startup: it lists Services matching `app.kubernetes.io/name=prometheus` or `app=prometheus`, scores candidates by port, name, namespace, and component labels, then validates the top candidates via `GET /api/v1/status/buildinfo`. If no endpoint is found, the backend starts in degraded mode with metrics disabled (HTTP 503 on metric endpoints).
+
 ---
 
 ## Backend Package Structure
@@ -85,7 +87,10 @@ backend/
     │   └── worker.go            # Background auto-analysis worker
     ├── config/config.go         # YAML + env var configuration loading
     ├── domain/models.go         # Core types: ChangeEvent, ImpactAnalysis, RankedChange
-    ├── metrics/prometheus.go    # Prometheus HTTP client, PromQL template execution
+    ├── discovery/prometheus.go  # Kubernetes-based Prometheus endpoint auto-discovery
+    ├── metrics/
+    │   ├── metrics.go           # MetricsProvider interface, UnavailableMetricsProvider sentinel
+    │   └── prometheus.go        # Prometheus HTTP client, PromQL template execution
     └── storage/postgres.go      # PostgreSQL implementation of the Storage interface
 ```
 

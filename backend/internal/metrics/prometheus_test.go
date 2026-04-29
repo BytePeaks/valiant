@@ -1,7 +1,10 @@
 package metrics_test
 
 import (
+	"context"
+	"errors"
 	"testing"
+	"time"
 	"valiant/internal/config"
 	"valiant/internal/metrics"
 )
@@ -33,6 +36,29 @@ func TestNewPrometheusClient(t *testing.T) {
 	}
 	if client == nil {
 		t.Fatal("client is nil")
+	}
+}
+
+func TestNewPrometheusClientEmptyURL(t *testing.T) {
+	_, err := metrics.NewPrometheusClient("", nil, nil, &config.Config{
+		Analysis: config.AnalysisConfig{
+			WeightsBuiltIn: map[string]float64{},
+			WeightsCustom:  map[string]float64{},
+		},
+	})
+	if !errors.Is(err, metrics.ErrNoPrometheus) {
+		t.Fatalf("expected ErrNoPrometheus, got %v", err)
+	}
+}
+
+func TestUnavailableMetricsProvider(t *testing.T) {
+	p := &metrics.UnavailableMetricsProvider{}
+	_, err := p.GetAverageMetrics(context.Background(), nil, time.Now(), time.Now())
+	if !errors.Is(err, metrics.ErrPrometheusUnavailable) {
+		t.Fatalf("expected ErrPrometheusUnavailable, got %v", err)
+	}
+	if got := p.GetAvailableMetrics(); got != nil {
+		t.Fatalf("expected nil slice, got %v", got)
 	}
 }
 

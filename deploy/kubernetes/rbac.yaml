@@ -12,6 +12,9 @@ rules:
   - apiGroups: [""]
     resources: ["configmaps", "secrets"]
     verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["services", "namespaces"]
+    verbs: ["get", "list"]
 ---
 # ClusterRoleBinding grants the backend ServiceAccount cluster-wide read access.
 # For namespace-scoped alternative, replace this with individual RoleBindings

@@ -10,10 +10,12 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 	"valiant/internal/api"
 	"valiant/internal/collector"
 	"valiant/internal/config"
 	"valiant/internal/correlator"
+	"valiant/internal/discovery"
 	"valiant/internal/domain"
 	"valiant/internal/metrics"
 	"valiant/internal/retention"
@@ -81,9 +83,34 @@ func main() {
 	}
 	fmt.Println("Database migrations applied")
 
-	metricClient, err := metrics.NewPrometheusClient(cfg.Prometheus.URL, cfg.Prometheus.Queries, cfg.Prometheus.AdditionalMetrics, cfg)
-	if err != nil {
-		log.Fatalf("Failed to initialize prometheus client: %v", err)
+	var metricClient metrics.MetricsProvider
+	prometheusURL := cfg.Prometheus.URL
+	if prometheusURL == "" {
+		discoverer, err := discovery.NewPrometheusDiscoverer(*cfg)
+		if err != nil {
+			log.Printf("WARN: Prometheus auto-discovery unavailable (no K8s client): %v", err)
+		} else {
+			discoverCtx, discoverCancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer discoverCancel()
+			if url, err := discoverer.Discover(discoverCtx); err != nil {
+				log.Printf("WARN: Prometheus auto-discovery found no endpoint: %v — metrics disabled", err)
+			} else {
+				prometheusURL = url
+			}
+		}
+	}
+	if prometheusURL != "" {
+		pc, err := metrics.NewPrometheusClient(prometheusURL, cfg.Prometheus.Queries, cfg.Prometheus.AdditionalMetrics, cfg)
+		if err != nil {
+			log.Printf("WARN: Failed to initialize Prometheus client: %v — metrics disabled", err)
+			metricClient = &metrics.UnavailableMetricsProvider{}
+		} else {
+			log.Printf("INFO: Prometheus client initialized at %s", prometheusURL)
+			metricClient = pc
+		}
+	} else {
+		log.Printf("WARN: No Prometheus URL configured or discovered — metrics disabled")
+		metricClient = &metrics.UnavailableMetricsProvider{}
 	}
 
 	engine := correlator.NewEngine(store, metricClient, cfg)

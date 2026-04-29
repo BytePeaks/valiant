@@ -3,6 +3,7 @@ package metrics
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"text/template"
 	"time"
@@ -14,6 +15,9 @@ import (
 	"github.com/prometheus/common/model"
 )
 
+// ErrNoPrometheus is returned by NewPrometheusClient when no URL is provided.
+var ErrNoPrometheus = errors.New("prometheus URL is empty")
+
 type PrometheusClient struct {
 	api               v1.API
 	queries           map[string]string
@@ -23,6 +27,9 @@ type PrometheusClient struct {
 
 // NewPrometheusClient creates a new Prometheus client.
 func NewPrometheusClient(apiURL string, queries map[string]string, additionalMetrics []config.PrometheusMetric, cfg *config.Config) (*PrometheusClient, error) {
+	if apiURL == "" {
+		return nil, ErrNoPrometheus
+	}
 	client, err := api.NewClient(api.Config{
 		Address: apiURL,
 	})
