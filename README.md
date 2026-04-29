@@ -189,11 +189,6 @@ See [Getting Started](docs/getting-started.md) for full setup, Kubernetes deploy
 
 ## Roadmap
 
-- Intent-execution linking UI ("deployment story" timeline)
-- Git collector for tags and releases
-- Service health pulse indicators
-- RBAC manifest generation for OpenShift
-
 See [Roadmap](docs/roadmap.md) for the full list.
 
 ---
@@ -203,14 +198,10 @@ See [Roadmap](docs/roadmap.md) for the full list.
 We welcome contributions! Quick local setup:
 
 ```bash
+# Provide Prometheus before start in order to not generate 100+ warnings/errors :)
+
 # Start dependencies
-docker-compose up -d db prometheus
-
-# Backend
-cd backend && go run cmd/valiant/main.go
-
-# Frontend (separate terminal)
-cd frontend && npm install && npm run dev
+docker-compose up -d 
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for code style, testing requirements, and PR guidelines. Found a bug or have a feature request? [Open an issue](https://github.com/BytePeaks/valiant/issues).
