@@ -53,7 +53,7 @@ Production-ready. OpenShift-capable. The version teams can confidently run in a 
 - OpenShift RBAC manifests - pre-built Role and RoleBinding manifests alongside standard Kubernetes ones
 
 **UI & operations**
-- Service Health Pulse - traffic-light indicator per service derived from last known impact score
+- Service Health Pulse - traffic-light indicator per service derived from last known impact score ✅
 - Concurrent Group Visualization - highlight services that deployed within the same time window
 - Event search by Git SHA and arbitrary metadata values
 - Markdown/URL rendering in event metadata fields

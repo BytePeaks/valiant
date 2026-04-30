@@ -85,8 +85,8 @@ type MetricInfo struct {
 // ServiceHealth represents the current health status of a service derived from its latest impact analysis.
 type ServiceHealth struct {
 	Service        string     `json:"service"`
-	Status         string     `json:"status"`          // "healthy", "warning", "degraded", "unknown"
-	ImpactLevel    string     `json:"impact_level"`    // "NONE", "LOW", "MEDIUM", "HIGH", or ""
+	Status         string     `json:"status"`       // "healthy", "warning", "degraded", "unknown"
+	ImpactLevel    string     `json:"impact_level"` // "NONE", "LOW", "MEDIUM", "HIGH", or ""
 	ImpactScore    float64    `json:"impact_score"`
 	LastAnalyzedAt *time.Time `json:"last_analyzed_at,omitempty"`
 }
