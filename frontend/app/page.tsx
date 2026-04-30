@@ -1,8 +1,9 @@
 'use client';
 
 import { useEffect, useState, useCallback, useRef } from 'react';
-import { ChangeEvent, EventsResponse, fetchChangeEvents, fetchServices, fetchNamespaces, fetchAvailableMetrics } from '@/lib/api'; // Added fetchAvailableMetrics
+import { ChangeEvent, EventsResponse, ServiceHealth, fetchChangeEvents, fetchServices, fetchNamespaces, fetchAvailableMetrics, fetchServicesHealth } from '@/lib/api';
 import Timeline, { ViewMode } from '@/components/timeline/timeline';
+import ServiceHealthPulse from '@/components/service-health-pulse';
 import { RefreshCcw, Filter, ExternalLink, ChevronDown, ChevronUp, Layers, Search, X, Zap, Info, LayoutList, GitMerge } from 'lucide-react';
 import Link from 'next/link';
 import PromQLModal, { MetricInfo } from '@/components/promql-modal';
@@ -29,6 +30,7 @@ export default function Home() {
   const [customMetrics, setCustomMetrics] = useState<MetricInfo[]>([]);
   const [loadingMetrics, setLoadingMetrics] = useState(true);
   const [viewMode, setViewMode] = useState<ViewMode>('story');
+  const [servicesHealth, setServicesHealth] = useState<Record<string, ServiceHealth>>({});
 
   // Debounce search input
   useEffect(() => {
@@ -143,6 +145,17 @@ export default function Home() {
   // Load namespaces once on mount
   useEffect(() => {
     fetchNamespaces().then(setNamespaces);
+  }, []);
+
+  // Load services health once on mount
+  useEffect(() => {
+    fetchServicesHealth()
+      .then(health => {
+        const map: Record<string, ServiceHealth> = {};
+        health.forEach(h => { map[h.service] = h; });
+        setServicesHealth(map);
+      })
+      .catch(() => {});
   }, []);
 
   // Re-fetch services when namespace changes (filter services by selected namespace)
@@ -279,6 +292,7 @@ export default function Home() {
                       key={service}
                       className={`flex items-center gap-2 px-4 py-1.5 rounded-full text-xs font-bold transition-all border ${selectedService === service ? 'bg-blue-600 border-blue-600 text-white' : 'bg-white border-gray-200 text-gray-600 hover:border-blue-300'}`}
                     >
+                      <ServiceHealthPulse health={servicesHealth[service]} />
                       <button
                         onClick={() => setSelectedService(service === selectedService ? null : service)}
                         className="focus:outline-none"

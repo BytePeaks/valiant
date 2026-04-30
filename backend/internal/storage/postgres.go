@@ -771,6 +771,48 @@ func (s *PostgresStorage) SaveServicePreferences(ctx context.Context, serviceNam
 	return nil
 }
 
+func (s *PostgresStorage) GetServicesHealth(ctx context.Context) ([]domain.ServiceHealth, error) {
+	query := `
+		SELECT DISTINCT ON (svc)
+			svc,
+			ias.impact_score,
+			ias.impact_level,
+			ias.created_at
+		FROM change_events e
+		CROSS JOIN LATERAL unnest(e.affected_services) AS svc
+		JOIN impact_analysis_snapshots ias ON ias.event_id = e.id
+		ORDER BY svc, ias.created_at DESC
+	`
+
+	rows, err := s.db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get services health: %w", err)
+	}
+	defer rows.Close()
+
+	var results []domain.ServiceHealth
+	for rows.Next() {
+		var svc, level string
+		var score float64
+		var analyzedAt time.Time
+		if err := rows.Scan(&svc, &score, &level, &analyzedAt); err != nil {
+			return nil, err
+		}
+		t := analyzedAt
+		results = append(results, domain.ServiceHealth{
+			Service:        svc,
+			Status:         domain.HealthStatusFromImpactLevel(level),
+			ImpactLevel:    level,
+			ImpactScore:    score,
+			LastAnalyzedAt: &t,
+		})
+	}
+	if results == nil {
+		results = []domain.ServiceHealth{}
+	}
+	return results, nil
+}
+
 func (s *PostgresStorage) GetNamespaces(ctx context.Context) ([]string, error) {
 	query := `
 		SELECT DISTINCT metadata ->> 'env' as namespace

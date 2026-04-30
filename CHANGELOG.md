@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v1.0.0
+
+### Added
+- **Service Health Pulse** — traffic-light indicator per service derived from the latest completed impact analysis. A `GET /api/v1/services/health` endpoint returns an array of `ServiceHealth` objects (service name, status, impact level, score, last analyzed timestamp). Status maps as: `NONE`/`LOW` → `healthy` (green), `MEDIUM` → `warning` (amber, pulsing), `HIGH` → `degraded` (red, pulsing), no data → `unknown` (gray). The indicator appears as a small dot next to each service chip in the main dashboard filter panel and as a labeled badge in the service analytics page header.
+
 ## [1.0.0-beta] - 2026-04-29
 
 ### Added

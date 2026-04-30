@@ -22,6 +22,8 @@ type Storage interface {
 	GetServicePreferences(ctx context.Context, serviceName string) ([]string, error)
 	SaveServicePreferences(ctx context.Context, serviceName string, visibleMetrics []string) error
 
+	GetServicesHealth(ctx context.Context) ([]domain.ServiceHealth, error)
+
 	DeleteChangeEventsOlderThan(ctx context.Context, cutoff time.Time) (int64, error)
 
 	// Event linking methods

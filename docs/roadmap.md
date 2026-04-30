@@ -26,10 +26,9 @@ All features available in the current release.
 
 ---
 
-## v1.0.0-beta
+## Shipped - v1.0.0-beta
 
 **Theme: Complete the Foundation**
-**Status: In progress**
 
 | # | Item | Status |
 |---|------|--------|

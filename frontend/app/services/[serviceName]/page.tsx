@@ -3,11 +3,12 @@
 import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import {
-  ChangeEvent, EventsResponse, fetchChangeEvents,
-  fetchAvailableMetrics, fetchServicePreferences, saveServicePreferences,
+  ChangeEvent, EventsResponse, ServiceHealth, fetchChangeEvents,
+  fetchAvailableMetrics, fetchServicePreferences, saveServicePreferences, fetchServicesHealth,
 } from '@/lib/api';
 import type { MetricInfo } from '@/components/promql-modal';
 import Timeline from '@/components/timeline/timeline';
+import ServiceHealthPulse from '@/components/service-health-pulse';
 import { getIcon } from '@/components/icons';
 import { METRIC_CONFIG, CORE_METRICS } from '@/components/timeline/constants';
 import { ChevronLeft, Activity, Filter, RefreshCcw, BarChart2, Check } from 'lucide-react';
@@ -23,6 +24,7 @@ export default function ServicePage() {
   const [selectedMetrics, setSelectedMetrics] = useState<Set<string>>(new Set(CORE_METRICS));
   const [savingPrefs, setSavingPrefs] = useState(false);
   const [prefsSaved, setPrefsSaved] = useState(false);
+  const [serviceHealth, setServiceHealth] = useState<ServiceHealth | undefined>(undefined);
 
   const fetchServiceEvents = () => {
     setLoading(true);
@@ -37,6 +39,10 @@ export default function ServicePage() {
 
   useEffect(() => {
     fetchServiceEvents();
+    const decodedName = decodeURIComponent(serviceName as string);
+    fetchServicesHealth()
+      .then(health => setServiceHealth(health.find(h => h.service === decodedName)))
+      .catch(() => {});
   }, [serviceName]);
 
   useEffect(() => {
@@ -91,6 +97,7 @@ export default function ServicePage() {
               <h1 className="text-3xl font-black text-gray-900 tracking-tight uppercase italic">
                 {decodeURIComponent(serviceName as string)}
               </h1>
+              <ServiceHealthPulse health={serviceHealth} showLabel size="md" />
             </div>
             <p className="text-gray-500 font-medium">Service Analysis & Change History</p>
           </div>

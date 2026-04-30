@@ -42,6 +42,7 @@ func (router *Router) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/events", router.handleEvents)
 	mux.HandleFunc("/api/v1/events/", router.handleEventLinks)
 	mux.HandleFunc("/api/v1/services", router.handleServices)
+	mux.HandleFunc("/api/v1/services/health", router.handleServicesHealth)
 	mux.HandleFunc("/api/v1/services/", router.handleServicePreferences)
 	mux.HandleFunc("/api/v1/analyze", router.handleAnalysis)
 	mux.HandleFunc("/api/v1/metrics", router.handleMetrics)
@@ -84,6 +85,22 @@ func (router *Router) handleServices(w http.ResponseWriter, r *http.Request) {
 	}
 
 	json.NewEncoder(w).Encode(services)
+}
+
+func (router *Router) handleServicesHealth(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	health, err := router.storage.GetServicesHealth(r.Context())
+	if err != nil {
+		http.Error(w, "Failed to fetch services health", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(health)
 }
 
 func (router *Router) handleMetrics(w http.ResponseWriter, r *http.Request) {

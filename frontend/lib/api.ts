@@ -83,6 +83,14 @@ export interface RankedChange {
   service_scope: number;
 }
 
+export interface ServiceHealth {
+  service: string;
+  status: 'healthy' | 'warning' | 'degraded' | 'unknown';
+  impact_level: string;
+  impact_score: number;
+  last_analyzed_at?: string;
+}
+
 export interface RankingsResponse {
   service: string;
   from: string;
@@ -198,6 +206,14 @@ export async function saveServicePreferences(serviceName: string, visibleMetrics
   if (!res.ok) {
     throw new Error('Failed to save service preferences');
   }
+}
+
+export async function fetchServicesHealth(): Promise<ServiceHealth[]> {
+  const res = await fetch(`${API_BASE_URL}/services/health`);
+  if (!res.ok) {
+    throw new Error('Failed to fetch services health');
+  }
+  return res.json();
 }
 
 export async function fetchRankings(
