@@ -4,7 +4,8 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import { ChangeEvent, EventsResponse, ServiceHealth, fetchChangeEvents, fetchServices, fetchNamespaces, fetchAvailableMetrics, fetchServicesHealth } from '@/lib/api';
 import Timeline, { ViewMode } from '@/components/timeline/timeline';
 import ServiceHealthPulse from '@/components/service-health-pulse';
-import { RefreshCcw, Filter, ExternalLink, ChevronDown, ChevronUp, Layers, Search, X, Zap, Info, LayoutList, GitMerge } from 'lucide-react';
+import RetentionSettingsModal from '@/components/retention-settings-modal';
+import { RefreshCcw, Filter, ExternalLink, ChevronDown, ChevronUp, Layers, Search, X, Zap, Info, LayoutList, GitMerge, Settings } from 'lucide-react';
 import Link from 'next/link';
 import PromQLModal, { MetricInfo } from '@/components/promql-modal';
 
@@ -31,6 +32,11 @@ export default function Home() {
   const [loadingMetrics, setLoadingMetrics] = useState(true);
   const [viewMode, setViewMode] = useState<ViewMode>('story');
   const [servicesHealth, setServicesHealth] = useState<Record<string, ServiceHealth>>({});
+  const [isRetentionModalOpen, setIsRetentionModalOpen] = useState(false);
+  const [gitShaQuery, setGitShaQuery] = useState('');
+  const [debouncedGitSha, setDebouncedGitSha] = useState('');
+  const [metadataKey, setMetadataKey] = useState('');
+  const [metadataValue, setMetadataValue] = useState('');
 
   // Debounce search input
   useEffect(() => {
@@ -39,6 +45,14 @@ export default function Home() {
     }, 300);
     return () => clearTimeout(timer);
   }, [searchQuery]);
+
+  // Debounce git SHA input
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedGitSha(gitShaQuery);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [gitShaQuery]);
 
   // Fetch all metrics (built-in and custom) on component mount
   useEffect(() => {
@@ -104,6 +118,9 @@ export default function Home() {
     search: string,
     from: string,
     to: string,
+    gitSha: string,
+    mKey: string,
+    mValue: string,
   ) => {
     // Cancel any in-flight request
     if (abortControllerRef.current) {
@@ -122,6 +139,8 @@ export default function Home() {
         ...(search ? { search } : {}),
         ...(from ? { from: new Date(from).toISOString() } : {}),
         ...(to ? { to: new Date(to).toISOString() } : {}),
+        ...(gitSha ? { gitSha } : {}),
+        ...(mKey && mValue ? { metadataKey: mKey, metadataValue: mValue } : {}),
         linked_only: true,
       },
       controller.signal
@@ -171,16 +190,16 @@ export default function Home() {
 
   // Re-fetch when filters or search change
   useEffect(() => {
-    loadEvents(0, selectedService, selectedNamespace, debouncedSearch, dateFrom, dateTo);
-  }, [selectedService, selectedNamespace, debouncedSearch, dateFrom, dateTo, loadEvents]);
+    loadEvents(0, selectedService, selectedNamespace, debouncedSearch, dateFrom, dateTo, debouncedGitSha, metadataKey, metadataValue);
+  }, [selectedService, selectedNamespace, debouncedSearch, dateFrom, dateTo, debouncedGitSha, metadataKey, metadataValue, loadEvents]);
 
   const handleShowMore = () => {
     const nextOffset = offset + PAGE_SIZE;
-    loadEvents(nextOffset, selectedService, selectedNamespace, debouncedSearch, dateFrom, dateTo);
+    loadEvents(nextOffset, selectedService, selectedNamespace, debouncedSearch, dateFrom, dateTo, debouncedGitSha, metadataKey, metadataValue);
   };
 
   const handleRefresh = () => {
-    loadEvents(0, selectedService, selectedNamespace, debouncedSearch, dateFrom, dateTo);
+    loadEvents(0, selectedService, selectedNamespace, debouncedSearch, dateFrom, dateTo, debouncedGitSha, metadataKey, metadataValue);
   };
 
   const hasMore = events.length < total;
@@ -201,6 +220,13 @@ export default function Home() {
               <Zap className="w-4 h-4" />
               Investigate Incident
             </Link>
+            <button
+              onClick={() => setIsRetentionModalOpen(true)}
+              className="w-8 h-8 rounded-full flex items-center justify-center bg-gray-100 text-gray-500 hover:bg-gray-200 transition-colors shrink-0"
+              title="Retention Settings"
+            >
+              <Settings className="w-4 h-4" />
+            </button>
             <button
               onClick={() => setIsPromQLModalOpen(true)}
               className="w-8 h-8 rounded-full flex items-center justify-center bg-blue-100 text-blue-600 hover:bg-blue-200 transition-colors shrink-0"
@@ -243,6 +269,63 @@ export default function Home() {
                     <button
                       onClick={() => setSearchQuery('')}
                       className="absolute right-3 top-1/2 -translate-y-1/2 p-0.5 rounded-full text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
+              </section>
+
+              {/* Git SHA Filter */}
+              <section className="mb-8">
+                <div className="flex items-center gap-2 mb-4 text-xs font-bold text-gray-400 uppercase tracking-widest">
+                  Git SHA
+                </div>
+                <div className="relative">
+                  <GitMerge className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                  <input
+                    type="text"
+                    value={gitShaQuery}
+                    onChange={(e) => setGitShaQuery(e.target.value)}
+                    placeholder="e.g. a1b2c3d or full SHA"
+                    className="w-full pl-10 pr-10 py-2 rounded-full border border-gray-200 shadow-sm text-sm text-gray-700 placeholder-gray-400 focus:outline-none focus:border-blue-300 focus:ring-1 focus:ring-blue-300 transition-all font-mono"
+                  />
+                  {gitShaQuery && (
+                    <button
+                      onClick={() => setGitShaQuery('')}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 p-0.5 rounded-full text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
+              </section>
+
+              {/* Metadata Key/Value Filter */}
+              <section className="mb-8">
+                <div className="flex items-center gap-2 mb-4 text-xs font-bold text-gray-400 uppercase tracking-widest">
+                  Metadata Filter
+                </div>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={metadataKey}
+                    onChange={(e) => setMetadataKey(e.target.value)}
+                    placeholder="key (e.g. environment)"
+                    className="flex-1 px-3 py-2 rounded-lg border border-gray-200 shadow-sm text-sm text-gray-700 placeholder-gray-400 focus:outline-none focus:border-blue-300 focus:ring-1 focus:ring-blue-300 transition-all font-mono"
+                  />
+                  <span className="text-xs text-gray-400 font-bold">=</span>
+                  <input
+                    type="text"
+                    value={metadataValue}
+                    onChange={(e) => setMetadataValue(e.target.value)}
+                    placeholder="value (e.g. production)"
+                    className="flex-1 px-3 py-2 rounded-lg border border-gray-200 shadow-sm text-sm text-gray-700 placeholder-gray-400 focus:outline-none focus:border-blue-300 focus:ring-1 focus:ring-blue-300 transition-all font-mono"
+                  />
+                  {(metadataKey || metadataValue) && (
+                    <button
+                      onClick={() => { setMetadataKey(''); setMetadataValue(''); }}
+                      className="p-1.5 rounded-full text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
                     >
                       <X className="w-4 h-4" />
                     </button>
@@ -401,6 +484,10 @@ export default function Home() {
           )}
         </section>
       </div>
+      {isRetentionModalOpen && (
+        <RetentionSettingsModal onClose={() => setIsRetentionModalOpen(false)} />
+      )}
+
       {/* PromQL Metrics Modal */}
       <PromQLModal
         isOpen={isPromQLModalOpen}

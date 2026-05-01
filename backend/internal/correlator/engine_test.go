@@ -75,6 +75,14 @@ func (m *MockStorage) GetRecentConfigChangeEvents(ctx context.Context, service s
 	return nil, nil
 }
 
+func (m *MockStorage) GetServicesHealth(ctx context.Context) ([]domain.ServiceHealth, error) {
+	return nil, nil
+}
+
+func (m *MockStorage) GetSetting(ctx context.Context, key string) (string, error) { return "", nil }
+
+func (m *MockStorage) SaveSetting(ctx context.Context, key, value string) error { return nil }
+
 // MockMetrics implements metrics.MetricsProvider
 type MockMetrics struct {
 	baseline domain.MetricValues

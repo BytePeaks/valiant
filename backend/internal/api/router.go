@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 	"valiant/internal/config"
 	"valiant/internal/correlator"
@@ -17,18 +18,20 @@ import (
 )
 
 type Router struct {
-	storage    storage.Storage
-	correlator *correlator.Engine
-	metrics    metrics.MetricsProvider
-	config     *config.Config
+	storage      storage.Storage
+	correlator   *correlator.Engine
+	metrics      metrics.MetricsProvider
+	config       *config.Config
+	retentionTTL *atomic.Int64
 }
 
-func NewRouter(s storage.Storage, c *correlator.Engine, m metrics.MetricsProvider, cfg *config.Config) *Router {
+func NewRouter(s storage.Storage, c *correlator.Engine, m metrics.MetricsProvider, cfg *config.Config, retentionTTL *atomic.Int64) *Router {
 	return &Router{
-		storage:    s,
-		correlator: c,
-		metrics:    m,
-		config:     cfg,
+		storage:      s,
+		correlator:   c,
+		metrics:      m,
+		config:       cfg,
+		retentionTTL: retentionTTL,
 	}
 }
 
@@ -49,6 +52,7 @@ func (router *Router) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/metrics/custom", router.handleCustomMetrics)
 	mux.HandleFunc("/api/v1/namespaces", router.handleNamespaces)
 	mux.HandleFunc("/api/v1/rankings", router.handleRankings)
+	mux.HandleFunc("/api/v1/settings/retention", router.handleRetentionSettings)
 
 	return corsMiddleware(mux)
 }
@@ -101,6 +105,59 @@ func (router *Router) handleServicesHealth(w http.ResponseWriter, r *http.Reques
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(health)
+}
+
+type retentionSettingsRequest struct {
+	EventTTL string `json:"event_ttl"`
+}
+
+type retentionSettingsResponse struct {
+	EventTTL    string `json:"event_ttl"`
+	EventTTLDur int64  `json:"event_ttl_seconds"`
+}
+
+func (router *Router) handleRetentionSettings(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	if r.Method == http.MethodGet {
+		ttl := time.Duration(router.retentionTTL.Load())
+		json.NewEncoder(w).Encode(retentionSettingsResponse{
+			EventTTL:    router.config.Retention.EventTTL,
+			EventTTLDur: int64(ttl.Seconds()),
+		})
+		return
+	}
+
+	if r.Method == http.MethodPost {
+		var req retentionSettingsRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "invalid request body", http.StatusBadRequest)
+			return
+		}
+		if req.EventTTL == "" {
+			http.Error(w, "event_ttl is required", http.StatusBadRequest)
+			return
+		}
+		d, err := config.ParseDuration(req.EventTTL)
+		if err != nil || d <= 0 {
+			http.Error(w, "invalid event_ttl: use formats like 90d, 30d, 168h", http.StatusBadRequest)
+			return
+		}
+		if err := router.storage.SaveSetting(r.Context(), "retention_event_ttl", req.EventTTL); err != nil {
+			http.Error(w, "failed to save setting", http.StatusInternalServerError)
+			return
+		}
+		router.retentionTTL.Store(int64(d))
+		router.config.Retention.EventTTL = req.EventTTL
+		router.config.Retention.EventTTLDur = d
+		json.NewEncoder(w).Encode(retentionSettingsResponse{
+			EventTTL:    req.EventTTL,
+			EventTTLDur: int64(d.Seconds()),
+		})
+		return
+	}
+
+	w.WriteHeader(http.StatusMethodNotAllowed)
 }
 
 func (router *Router) handleMetrics(w http.ResponseWriter, r *http.Request) {
@@ -291,6 +348,15 @@ func (router *Router) handleEvents(w http.ResponseWriter, r *http.Request) {
 			if b, err := strconv.ParseBool(v); err == nil && b {
 				filters["linked_only"] = true
 			}
+		}
+		if v := q.Get("git_sha"); v != "" {
+			filters["git_sha"] = v
+		}
+		if v := q.Get("metadata_key"); v != "" {
+			filters["metadata_key"] = v
+		}
+		if v := q.Get("metadata_value"); v != "" {
+			filters["metadata_value"] = v
 		}
 
 		events, total, err := router.storage.GetChangeEvents(r.Context(), filters)

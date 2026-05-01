@@ -24,6 +24,9 @@ type Storage interface {
 
 	GetServicesHealth(ctx context.Context) ([]domain.ServiceHealth, error)
 
+	GetSetting(ctx context.Context, key string) (string, error)
+	SaveSetting(ctx context.Context, key, value string) error
+
 	DeleteChangeEventsOlderThan(ctx context.Context, cutoff time.Time) (int64, error)
 
 	// Event linking methods

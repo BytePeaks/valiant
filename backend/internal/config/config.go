@@ -135,12 +135,12 @@ func Load(configPath string) (*Config, error) {
 		cfg.Analysis.ConfigTriggerDur = 15 * time.Minute
 	}
 
-	cfg.Retention.EventTTLDur, err = parseDuration(cfg.Retention.EventTTL)
+	cfg.Retention.EventTTLDur, err = ParseDuration(cfg.Retention.EventTTL)
 	if err != nil {
 		cfg.Retention.EventTTLDur = 90 * 24 * time.Hour
 	}
 
-	cfg.Retention.CleanupIntervalDur, err = parseDuration(cfg.Retention.CleanupInterval)
+	cfg.Retention.CleanupIntervalDur, err = ParseDuration(cfg.Retention.CleanupInterval)
 	if err != nil {
 		cfg.Retention.CleanupIntervalDur = 1 * time.Hour
 	}
@@ -154,8 +154,8 @@ func Load(configPath string) (*Config, error) {
 	return cfg, nil
 }
 
-// parseDuration extends time.ParseDuration with support for a "d" suffix (days).
-func parseDuration(s string) (time.Duration, error) {
+// ParseDuration extends time.ParseDuration with support for a "d" suffix (days).
+func ParseDuration(s string) (time.Duration, error) {
 	if strings.HasSuffix(s, "d") {
 		numStr := strings.TrimSuffix(s, "d")
 		var days float64

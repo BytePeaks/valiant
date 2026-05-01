@@ -65,6 +65,9 @@ export interface EventFilters {
   search?: string;
   isExecutionOnly?: boolean;
   linked_only?: boolean;
+  gitSha?: string;
+  metadataKey?: string;
+  metadataValue?: string;
 }
 
 export interface EventsResponse {
@@ -108,6 +111,9 @@ export async function fetchChangeEvents(
   // Map camelCase filter keys to snake_case backend query params
   const keyMap: Record<string, string> = {
     isExecutionOnly: 'is_execution_only',
+    gitSha: 'git_sha',
+    metadataKey: 'metadata_key',
+    metadataValue: 'metadata_value',
   };
 
   const params = new URLSearchParams();
@@ -206,6 +212,30 @@ export async function saveServicePreferences(serviceName: string, visibleMetrics
   if (!res.ok) {
     throw new Error('Failed to save service preferences');
   }
+}
+
+export interface RetentionSettings {
+  event_ttl: string;
+  event_ttl_seconds: number;
+}
+
+export async function fetchRetentionSettings(): Promise<RetentionSettings> {
+  const res = await fetch(`${API_BASE_URL}/settings/retention`);
+  if (!res.ok) throw new Error('Failed to fetch retention settings');
+  return res.json();
+}
+
+export async function saveRetentionSettings(eventTTL: string): Promise<RetentionSettings> {
+  const res = await fetch(`${API_BASE_URL}/settings/retention`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ event_ttl: eventTTL }),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || 'Failed to save retention settings');
+  }
+  return res.json();
 }
 
 export async function fetchServicesHealth(): Promise<ServiceHealth[]> {

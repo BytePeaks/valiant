@@ -6,12 +6,19 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 	"valiant/internal/api"
 	"valiant/internal/config"
 	"valiant/internal/domain"
 )
+
+func newTestAtomic() *atomic.Int64 {
+	var ttl atomic.Int64
+	ttl.Store(int64(90 * 24 * time.Hour))
+	return &ttl
+}
 
 // MockStorage for API tests
 type MockStorage struct {
@@ -86,6 +93,14 @@ func (m *MockStorage) GetRecentConfigChangeEvents(ctx context.Context, service s
 	return nil, nil
 }
 
+func (m *MockStorage) GetServicesHealth(ctx context.Context) ([]domain.ServiceHealth, error) {
+	return []domain.ServiceHealth{}, nil
+}
+
+func (m *MockStorage) GetSetting(ctx context.Context, key string) (string, error) { return "", nil }
+
+func (m *MockStorage) SaveSetting(ctx context.Context, key, value string) error { return nil }
+
 // MockMetrics for API tests
 type MockMetrics struct{}
 
@@ -102,7 +117,7 @@ func (m *MockMetrics) GetAvailableMetrics() []domain.MetricInfo {
 
 func TestHealthCheck(t *testing.T) {
 	cfg := &config.Config{}
-	router := api.NewRouter(&MockStorage{}, nil, &MockMetrics{}, cfg)
+	router := api.NewRouter(&MockStorage{}, nil, &MockMetrics{}, cfg, newTestAtomic())
 	ts := httptest.NewServer(router.Handler())
 	defer ts.Close()
 
@@ -118,7 +133,7 @@ func TestHealthCheck(t *testing.T) {
 func TestPostEvent(t *testing.T) {
 	store := &MockStorage{}
 	cfg := &config.Config{}
-	router := api.NewRouter(store, nil, &MockMetrics{}, cfg)
+	router := api.NewRouter(store, nil, &MockMetrics{}, cfg, newTestAtomic())
 	ts := httptest.NewServer(router.Handler())
 	defer ts.Close()
 
@@ -141,7 +156,7 @@ func TestPostEvent(t *testing.T) {
 
 func TestGetMetrics(t *testing.T) {
 	cfg := &config.Config{}
-	router := api.NewRouter(&MockStorage{}, nil, &MockMetrics{}, cfg)
+	router := api.NewRouter(&MockStorage{}, nil, &MockMetrics{}, cfg, newTestAtomic())
 	ts := httptest.NewServer(router.Handler())
 	defer ts.Close()
 
@@ -175,7 +190,7 @@ func TestGetEventsPaginatedResponse(t *testing.T) {
 		},
 	}
 	cfg := &config.Config{}
-	router := api.NewRouter(store, nil, &MockMetrics{}, cfg)
+	router := api.NewRouter(store, nil, &MockMetrics{}, cfg, newTestAtomic())
 	ts := httptest.NewServer(router.Handler())
 	defer ts.Close()
 
@@ -222,7 +237,7 @@ func TestGetEventsPaginatedResponse(t *testing.T) {
 func TestGetEventsPaginationParams(t *testing.T) {
 	store := &MockStorage{}
 	cfg := &config.Config{}
-	router := api.NewRouter(store, nil, &MockMetrics{}, cfg)
+	router := api.NewRouter(store, nil, &MockMetrics{}, cfg, newTestAtomic())
 	ts := httptest.NewServer(router.Handler())
 	defer ts.Close()
 
@@ -260,7 +275,7 @@ func TestGetEventsPaginationParams(t *testing.T) {
 func TestGetEventsFilterParams(t *testing.T) {
 	store := &MockStorage{}
 	cfg := &config.Config{}
-	router := api.NewRouter(store, nil, &MockMetrics{}, cfg)
+	router := api.NewRouter(store, nil, &MockMetrics{}, cfg, newTestAtomic())
 	ts := httptest.NewServer(router.Handler())
 	defer ts.Close()
 
@@ -305,7 +320,7 @@ func TestGetEventsFilterParams(t *testing.T) {
 func TestGetEventsEmptyReturnsArray(t *testing.T) {
 	store := &MockStorage{}
 	cfg := &config.Config{}
-	router := api.NewRouter(store, nil, &MockMetrics{}, cfg)
+	router := api.NewRouter(store, nil, &MockMetrics{}, cfg, newTestAtomic())
 	ts := httptest.NewServer(router.Handler())
 	defer ts.Close()
 
@@ -353,7 +368,7 @@ func TestGetEventsContainsAnalysisStatus(t *testing.T) {
 		analyzedEventIDs: map[string]bool{"analyzed-evt": true},
 	}
 
-	router := api.NewRouter(store, nil, &MockMetrics{}, cfg)
+	router := api.NewRouter(store, nil, &MockMetrics{}, cfg, newTestAtomic())
 	ts := httptest.NewServer(router.Handler())
 	defer ts.Close()
 
@@ -399,7 +414,7 @@ func TestGetEventsContainsAnalysisStatus(t *testing.T) {
 
 func TestRankingsEndpoint_MissingParams(t *testing.T) {
 	cfg := &config.Config{}
-	router := api.NewRouter(&MockStorage{}, nil, &MockMetrics{}, cfg)
+	router := api.NewRouter(&MockStorage{}, nil, &MockMetrics{}, cfg, newTestAtomic())
 	ts := httptest.NewServer(router.Handler())
 	defer ts.Close()
 
@@ -433,7 +448,7 @@ func TestRankingsEndpoint_MissingParams(t *testing.T) {
 
 func TestRankingsEndpoint_MethodNotAllowed(t *testing.T) {
 	cfg := &config.Config{}
-	router := api.NewRouter(&MockStorage{}, nil, &MockMetrics{}, cfg)
+	router := api.NewRouter(&MockStorage{}, nil, &MockMetrics{}, cfg, newTestAtomic())
 	ts := httptest.NewServer(router.Handler())
 	defer ts.Close()
 

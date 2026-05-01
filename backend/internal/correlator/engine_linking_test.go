@@ -118,6 +118,16 @@ func (m *LinkingMockStorage) GetRecentConfigChangeEvents(ctx context.Context, se
 	return nil, nil
 }
 
+func (m *LinkingMockStorage) GetServicesHealth(ctx context.Context) ([]domain.ServiceHealth, error) {
+	return nil, nil
+}
+
+func (m *LinkingMockStorage) GetSetting(ctx context.Context, key string) (string, error) {
+	return "", nil
+}
+
+func (m *LinkingMockStorage) SaveSetting(ctx context.Context, key, value string) error { return nil }
+
 func TestIntentExecutionLinking(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Analysis.IntentExecutionCorrelationDur = 1 * time.Hour

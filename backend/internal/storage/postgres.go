@@ -322,6 +322,23 @@ func (s *PostgresStorage) GetChangeEvents(ctx context.Context, filters map[strin
 		args = append(args, pattern, pattern)
 		argCount += 2
 	}
+	if gitSha, ok := filters["git_sha"].(string); ok && gitSha != "" {
+		pattern := gitSha + "%"
+		whereClauses = append(whereClauses, fmt.Sprintf(
+			"(metadata ->> 'git_commit_sha' ILIKE $%d OR metadata ->> 'git_sha' ILIKE $%d)",
+			argCount, argCount+1,
+		))
+		args = append(args, pattern, pattern)
+		argCount += 2
+	}
+	if metaKey, ok := filters["metadata_key"].(string); ok && metaKey != "" {
+		if metaValue, vok := filters["metadata_value"].(string); vok && metaValue != "" {
+			jsonFilter, _ := json.Marshal(map[string]string{metaKey: metaValue})
+			whereClauses = append(whereClauses, fmt.Sprintf("metadata @> $%d::jsonb", argCount))
+			args = append(args, string(jsonFilter))
+			argCount++
+		}
+	}
 	if metadata, ok := filters["metadata_has_any"].(map[string]string); ok && len(metadata) > 0 {
 		var metadataClauses []string
 		for key, value := range metadata {
@@ -811,6 +828,30 @@ func (s *PostgresStorage) GetServicesHealth(ctx context.Context) ([]domain.Servi
 		results = []domain.ServiceHealth{}
 	}
 	return results, nil
+}
+
+func (s *PostgresStorage) GetSetting(ctx context.Context, key string) (string, error) {
+	var value string
+	err := s.db.QueryRowContext(ctx, `SELECT value FROM system_settings WHERE key = $1`, key).Scan(&value)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("failed to get setting %q: %w", key, err)
+	}
+	return value, nil
+}
+
+func (s *PostgresStorage) SaveSetting(ctx context.Context, key, value string) error {
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO system_settings (key, value, updated_at)
+		VALUES ($1, $2, NOW())
+		ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
+	`, key, value)
+	if err != nil {
+		return fmt.Errorf("failed to save setting %q: %w", key, err)
+	}
+	return nil
 }
 
 func (s *PostgresStorage) GetNamespaces(ctx context.Context) ([]string, error) {

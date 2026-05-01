@@ -72,6 +72,14 @@ func (m *mockStorage) DeleteChangeEventsOlderThan(ctx context.Context, cutoff ti
 	return m.deleteCounter, m.deleteError
 }
 
+func (m *mockStorage) GetServicesHealth(ctx context.Context) ([]domain.ServiceHealth, error) {
+	return nil, nil
+}
+
+func (m *mockStorage) GetSetting(ctx context.Context, key string) (string, error) { return "", nil }
+
+func (m *mockStorage) SaveSetting(ctx context.Context, key, value string) error { return nil }
+
 func TestWorker_DeletesOldEvents(t *testing.T) {
 	ttl := 24 * time.Hour
 	interval := 10 * time.Millisecond
@@ -80,7 +88,7 @@ func TestWorker_DeletesOldEvents(t *testing.T) {
 		deleteCounter: 5, // Simulate 5 events deleted
 	}
 
-	worker := NewWorker(mockStore, ttl)
+	worker := NewWorker(mockStore, func() time.Duration { return ttl })
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -117,7 +125,7 @@ func TestWorker_StorageError(t *testing.T) {
 		deleteError: errors.New("db error"),
 	}
 
-	worker := NewWorker(mockStore, ttl)
+	worker := NewWorker(mockStore, func() time.Duration { return ttl })
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -148,7 +156,7 @@ func TestWorker_ZeroEventsDeleted(t *testing.T) {
 		deleteCounter: 0, // Simulate 0 events deleted
 	}
 
-	worker := NewWorker(mockStore, ttl)
+	worker := NewWorker(mockStore, func() time.Duration { return ttl })
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 	"valiant/internal/api"
 	"valiant/internal/collector"
@@ -114,11 +115,24 @@ func main() {
 	}
 
 	engine := correlator.NewEngine(store, metricClient, cfg)
-	router := api.NewRouter(store, engine, metricClient, cfg)
 
 	// Setup application context
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
+	// Load persisted retention TTL from DB (overrides config.yaml if present)
+	var retentionTTLNanos atomic.Int64
+	retentionTTLNanos.Store(int64(cfg.Retention.EventTTLDur))
+	if ttlStr, err := store.GetSetting(ctx, "retention_event_ttl"); err == nil && ttlStr != "" {
+		if d, err := config.ParseDuration(ttlStr); err == nil {
+			retentionTTLNanos.Store(int64(d))
+			cfg.Retention.EventTTLDur = d
+			cfg.Retention.EventTTL = ttlStr
+		}
+	}
+
+	getTTL := func() time.Duration { return time.Duration(retentionTTLNanos.Load()) }
+	router := api.NewRouter(store, engine, metricClient, cfg, &retentionTTLNanos)
 
 	// Start Background Worker (Automatic Analysis)
 	worker := correlator.NewWorker(engine, cfg.Worker.PollingIntervalDur)
@@ -126,7 +140,7 @@ func main() {
 
 	// Start Retention Worker
 	if cfg.Retention.EventTTLDur > 0 {
-		retentionWorker := retention.NewWorker(store, cfg.Retention.EventTTLDur)
+		retentionWorker := retention.NewWorker(store, getTTL)
 		go retentionWorker.Start(ctx, cfg.Retention.CleanupIntervalDur)
 	}
 

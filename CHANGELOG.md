@@ -8,7 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased] - v1.0.0
 
 ### Added
+- **Event search by Git SHA and metadata** — the main dashboard filter panel now includes two new targeted search controls: a dedicated **Git SHA** field (prefix/partial match against `git_commit_sha` and `git_sha` metadata keys, case-insensitive) and a **Metadata Filter** key=value pair that performs an exact JSONB containment match on any metadata field. Both are wired to `GET /api/v1/events` via new `git_sha`, `metadata_key`, and `metadata_value` query parameters with corresponding storage-layer filter clauses.
 - **Service Health Pulse** — traffic-light indicator per service derived from the latest completed impact analysis. A `GET /api/v1/services/health` endpoint returns an array of `ServiceHealth` objects (service name, status, impact level, score, last analyzed timestamp). Status maps as: `NONE`/`LOW` → `healthy` (green), `MEDIUM` → `warning` (amber, pulsing), `HIGH` → `degraded` (red, pulsing), no data → `unknown` (gray). The indicator appears as a small dot next to each service chip in the main dashboard filter panel and as a labeled badge in the service analytics page header.
+- **Retention settings in UI** — event TTL is now configurable from the dashboard without editing `config.yaml`. A gear icon in the main header opens a modal with quick-select presets (7 d → 1 year) and a free-text field accepting the same `Nd`/`Nh` duration format as the config file. Settings are persisted to a new `system_settings` Postgres table (migration `010`) and take effect immediately — the retention worker reads the live TTL on every cleanup cycle via an `atomic.Int64`, so no restart is required. `GET /api/v1/settings/retention` returns the current TTL; `POST /api/v1/settings/retention` validates, persists, and hot-updates the running worker.
 
 ## [1.0.0-beta] - 2026-04-29
 
