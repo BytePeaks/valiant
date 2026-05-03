@@ -120,4 +120,28 @@ send_event "ArgoCD Sync: config-update" "argocd" "config_sync" '["config-service
 MIXED_SHA=$(generate_sha)
 send_event "Mixed Event Testing" "manual" "mixed_test" '["multi-service"]' "300 minutes ago" "{ \"git_commit_sha\": \"$MIXED_SHA\", \"repository_url\": \"https://github.com/valiant-io/mixed-test\", \"jenkins_url\": \"http://jenkins.example.com/mixed-project\", \"argocd_url\": \"http://argocd.example.com/mixed-cluster\", \"template_missing_key_test_base\": \"http://test.com/\" }"
 
+echo "--- Generating Concurrent Group Visualization Demo ---"
+# Three independent services deploying within the same 30-minute window (no SHA linking).
+# These will appear as a single "N concurrent deployments" group on the timeline.
+
+CONCURRENT_SHA_1=$(generate_sha)
+CONCURRENT_SHA_2=$(generate_sha)
+CONCURRENT_SHA_3=$(generate_sha)
+
+send_event "CI Pipeline #501: cache-service build" "github-actions" "build_success" '["cache-service"]' "203 minutes ago" "{ \"git_commit_sha\": \"$CONCURRENT_SHA_1\", \"image_tag\": \"my-registry/cache-service:$CONCURRENT_SHA_1\", \"github_run_url\": \"https://github.com/valiant-io/valiant/actions/runs/$((RANDOM % 100000 + 10000))\", \"release_notes\": \"**Breaking change**: \`cache_ttl\` config key renamed to \`ttl_seconds\`. See [migration guide](https://docs.example.com/cache-migration) for details.\" }"
+
+send_event "Deployment of notification-service v1.5.0" "argocd" "deployment_rollout" '["notification-service"]' "207 minutes ago" "{ \"git_commit_sha\": \"$CONCURRENT_SHA_2\", \"image_tag\": \"my-registry/notification-service:$CONCURRENT_SHA_2\", \"argocd_url\": \"http://argocd.example.com\", \"argocd_app_name\": \"notification-prod\", \"description\": \"Bumps *retry-library* from 2.1.0 to 2.3.1 — fixes exponential backoff on 429 responses.\" }"
+
+send_event "CI Pipeline #502: gateway-service hotfix" "CI" "build_success" '["gateway-service"]' "212 minutes ago" "{ \"git_commit_sha\": \"$CONCURRENT_SHA_3\", \"image_tag\": \"my-registry/gateway-service:$CONCURRENT_SHA_3\", \"ticket_url\": \"https://github.com/valiant-io/valiant/issues/88\", \"runbook_url\": \"https://docs.example.com/runbooks/gateway-hotfix\" }"
+
+echo "--- Generating Markdown/URL Metadata Demo ---"
+# Events with freeform metadata values containing markdown and plain URLs.
+# These exercise the MetadataSection renderer: bold, italic, inline code, [text](url), and bare https:// links.
+
+MARKDOWN_SHA=$(generate_sha)
+
+send_event "Release: billing-service v3.0.0" "github-actions" "build_success" '["billing-service"]' "340 minutes ago" "{ \"git_commit_sha\": \"$MARKDOWN_SHA\", \"image_tag\": \"my-registry/billing-service:$MARKDOWN_SHA\", \"release_notes\": \"**v3.0.0** — rewrites invoice generation. \`POST /invoices\` now returns *202 Accepted* instead of blocking. See [changelog](https://github.com/valiant-io/valiant/blob/main/CHANGELOG.md).\", \"runbook_url\": \"https://docs.example.com/runbooks/billing-rollout\", \"on_call\": \"**@platform-team** — watch error rate for 30 min post-deploy.\" }"
+
+send_event "Deployment of billing-service v3.0.0" "argocd" "deployment_rollout" '["billing-service"]' "330 minutes ago" "{ \"git_commit_sha\": \"$MARKDOWN_SHA\", \"image_tag\": \"my-registry/billing-service:$MARKDOWN_SHA\", \"argocd_url\": \"http://argocd.example.com\", \"argocd_app_name\": \"billing-prod\", \"rollback_url\": \"https://argocd.example.com/applications/billing-prod/rollback\" }"
+
 echo "Done seeding."

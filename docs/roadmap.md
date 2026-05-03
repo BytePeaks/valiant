@@ -56,7 +56,7 @@ Production-ready. OpenShift-capable. The version teams can confidently run in a 
 - Service Health Pulse - traffic-light indicator per service derived from last known impact score ✅
 - Concurrent Group Visualization - highlight services that deployed within the same time window
 - Event search by Git SHA and arbitrary metadata values
-- Markdown/URL rendering in event metadata fields
+- Markdown/URL rendering in event metadata fields ✅
 - Retention settings exposed in the UI (no more editing `config.yaml` for TTL)
 
 **Onboarding**

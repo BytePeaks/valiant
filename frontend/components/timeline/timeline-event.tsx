@@ -10,6 +10,7 @@ import { MetricDelta } from './metric-delta';
 import { METRIC_CONFIG, CORE_METRICS } from './constants';
 import { getIcon } from '../icons';
 import BlastRadiusDisplay from './blast-radius';
+import { MetadataSection } from '../metadata-value';
 
 interface TimelineEventProps {
   event: ChangeEvent;
@@ -174,6 +175,9 @@ export default function TimelineEvent({ event, selectedMetrics: pageSelectedMetr
           </div>
           <h3 className="text-xl font-bold text-gray-900 group-hover:text-blue-700 transition-colors">{event.summary}</h3>
           {event.blast_radius && <BlastRadiusDisplay blastRadius={event.blast_radius} />}
+          {event.metadata && Object.keys(event.metadata).length > 0 && (
+            <MetadataSection metadata={event.metadata} />
+          )}
           <div className="flex items-center gap-2 text-sm text-gray-400">
             <Clock className="w-3 h-3" />
             {new Date(event.timestamp).toLocaleString()}

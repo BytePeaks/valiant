@@ -15,6 +15,7 @@ import { MetricDelta } from './metric-delta';
 import { METRIC_CONFIG, CORE_METRICS } from './constants';
 import { getIcon } from '../icons';
 import BlastRadiusDisplay from './blast-radius';
+import { MetadataSection } from '../metadata-value';
 
 interface Props {
   event: ChangeEvent;
@@ -341,6 +342,12 @@ export default function DeploymentStoryCard({ event, selectedMetrics: pageSelect
           </div>
 
           {event.blast_radius && <BlastRadiusDisplay blastRadius={event.blast_radius} />}
+
+          {/* Merged metadata for both intent and execution, deduplicated */}
+          {(() => {
+            const merged: Record<string, string> = { ...intent.metadata, ...event.metadata };
+            return Object.keys(merged).length > 0 ? <MetadataSection metadata={merged} /> : null;
+          })()}
 
           {/* Intent contextual links */}
           {(intent.contextual_links?.length ?? 0) > 0 && (

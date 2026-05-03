@@ -182,4 +182,55 @@ Send-Event -Summary "Mixed Event Testing" -Trigger "manual" -Type "mixed_test" -
     template_missing_key_test_base = "http://test.com/"
 }
 
+Write-Host "--- Generating Concurrent Group Visualization Demo ---"
+# Three independent services deploying within the same 30-minute window (no SHA linking).
+# These will appear as a single "N concurrent deployments" group on the timeline.
+
+$ConcurrentSha1 = New-Sha
+$ConcurrentSha2 = New-Sha
+$ConcurrentSha3 = New-Sha
+
+Send-Event -Summary "CI Pipeline #501: cache-service build" -Trigger "github-actions" -Type "build_success" -Services @("cache-service") -MinutesAgo 203 -MetadataArgs @{
+    git_commit_sha = $ConcurrentSha1
+    image_tag = "my-registry/cache-service:$ConcurrentSha1"
+    github_run_url = "https://github.com/valiant-io/valiant/actions/runs/$(Get-Random -Minimum 10000 -Maximum 99999)"
+    release_notes = "**Breaking change**: ``cache_ttl`` config key renamed to ``ttl_seconds``. See [migration guide](https://docs.example.com/cache-migration) for details."
+}
+
+Send-Event -Summary "Deployment of notification-service v1.5.0" -Trigger "argocd" -Type "deployment_rollout" -Services @("notification-service") -MinutesAgo 207 -MetadataArgs @{
+    git_commit_sha = $ConcurrentSha2
+    image_tag = "my-registry/notification-service:$ConcurrentSha2"
+    argocd_url = "http://argocd.example.com"
+    argocd_app_name = "notification-prod"
+    description = "Bumps *retry-library* from 2.1.0 to 2.3.1 — fixes exponential backoff on 429 responses."
+}
+
+Send-Event -Summary "CI Pipeline #502: gateway-service hotfix" -Trigger "CI" -Type "build_success" -Services @("gateway-service") -MinutesAgo 212 -MetadataArgs @{
+    git_commit_sha = $ConcurrentSha3
+    image_tag = "my-registry/gateway-service:$ConcurrentSha3"
+    ticket_url = "https://github.com/valiant-io/valiant/issues/88"
+    runbook_url = "https://docs.example.com/runbooks/gateway-hotfix"
+}
+
+Write-Host "--- Generating Markdown/URL Metadata Demo ---"
+# Events with freeform metadata values containing markdown and plain URLs.
+# These exercise the MetadataSection renderer: bold, italic, inline code, [text](url), and bare https:// links.
+
+$MarkdownSha = New-Sha
+Send-Event -Summary "Release: billing-service v3.0.0" -Trigger "github-actions" -Type "build_success" -Services @("billing-service") -MinutesAgo 340 -MetadataArgs @{
+    git_commit_sha = $MarkdownSha
+    image_tag = "my-registry/billing-service:$MarkdownSha"
+    release_notes = "**v3.0.0** — rewrites invoice generation. ``POST /invoices`` now returns *202 Accepted* instead of blocking. See [changelog](https://github.com/valiant-io/valiant/blob/main/CHANGELOG.md)."
+    runbook_url = "https://docs.example.com/runbooks/billing-rollout"
+    on_call = "**@platform-team** — watch error rate for 30 min post-deploy."
+}
+
+Send-Event -Summary "Deployment of billing-service v3.0.0" -Trigger "argocd" -Type "deployment_rollout" -Services @("billing-service") -MinutesAgo 330 -MetadataArgs @{
+    git_commit_sha = $MarkdownSha
+    image_tag = "my-registry/billing-service:$MarkdownSha"
+    argocd_url = "http://argocd.example.com"
+    argocd_app_name = "billing-prod"
+    rollback_url = "https://argocd.example.com/applications/billing-prod/rollback"
+}
+
 Write-Host "Done seeding."

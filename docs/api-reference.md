@@ -48,7 +48,7 @@ Submit a new change event (e.g., from a CI/CD pipeline).
 | `summary` | string | no | Human-readable description |
 | `timestamp` | string (RFC3339) | yes | When the change started |
 | `end_time` | string (RFC3339) | no | When the change completed |
-| `metadata` | object | no | Key-value pairs (e.g., `git_commit_sha`, `image_tag`) |
+| `metadata` | object | no | Arbitrary string key-value pairs. Well-known keys (`git_commit_sha`, `image_tag`) drive linking and diffing. All other keys are displayed in the UI — values that are plain `https://` URLs render as clickable links; values containing `**bold**`, `*italic*`, `` `code` ``, or `[text](url)` markdown syntax are rendered inline. |
 
 **Response:** `201 Created` (empty body)
 
